@@ -422,18 +422,6 @@ fm_backend_herdr_session() {
   printf '%s' "${HERDR_SESSION:-default}"
 }
 
-# fm_backend_herdr_label_rename: rename a workspace or tab by calling the
-# guarded herdr CLI. Workspace labels are the captain-visible name in a
-# per-task projection; tab labels are the per-task name in a shared workspace.
-# Prints the herdr output (silent on success).
-# ponytail: delegates to the existing CLI, no new wiring.
-fm_backend_herdr_workspace_rename() {  # <session> <workspace-id> <label>
-  fm_backend_herdr_cli "$1" workspace rename "$2" "$3"
-}
-fm_backend_herdr_tab_rename() {  # <session> <tab-id> <label>
-  fm_backend_herdr_cli "$1" tab rename "$2" "$3"
-}
-
 # fm_backend_herdr_projection_id: generate a compact 128-bit base64url token.
 # The token is a non-adversarial visual correlator, never destructive
 # authority.

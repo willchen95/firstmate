@@ -326,6 +326,9 @@ done
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$LABEL_SET" -eq 0 ] || [ -n "$LABEL" ] || { echo "error: --label requires a non-empty value" >&2; exit 1; }
+case "$LABEL" in
+  *$'\n'*|*$'\r'*) echo "error: --label contains newline or carriage return characters" >&2; exit 1 ;;
+esac
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
@@ -1937,7 +1940,11 @@ case "$BACKEND" in
             spawn_herdr_presentation_order_lock_release
           else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
-            HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
+            if [ "$LABEL_SET" -eq 1 ] && [ -n "$LABEL" ]; then
+              HERDR_PROJECTION_LABEL=$LABEL
+            else
+              HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
+            fi
             if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
               "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W"; then
               if [ "${FM_BACKEND_HERDR_PROJECTION_CLEANUP_SAFE:-0}" = 1 ]; then
@@ -1960,19 +1967,21 @@ case "$BACKEND" in
             HERDR_PROJECTION_ABORT_SEEDED_PANE=$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID
             fm_backend_herdr_projection_order_best_effort \
               "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PARENT_WORKSPACE_ID"
-            HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
-            if [ -n "$HERDR_HOME_ID" ] \
-               && fm_backend_herdr_projection_live_binding_matches \
-                 "$HERDR_SES" "$HERDR_PROJECTION_ID" "$HERDR_WORKSPACE_ID" \
-                 "$HERDR_TAB_ID" "$HERDR_PANE_ID" "$HERDR_PARENT_WORKSPACE_ID" \
-                 "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W" \
-               && fm_backend_herdr_projection_journal_bind \
-                 "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_HOME_ID" "$HERDR_SES" \
-                 "$HERDR_WORKSPACE_ID" "$HERDR_TAB_ID" "$HERDR_PANE_ID" \
-                 "$HERDR_PARENT_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W"; then
-              :
-            else
-              echo "warning: herdr presentation could not publish an exact restart binding; this task will use flat fallback after a restart" >&2
+            if [ "$LABEL_SET" -eq 0 ] || [ -z "$LABEL" ]; then
+              HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
+              if [ -n "$HERDR_HOME_ID" ] \
+                 && fm_backend_herdr_projection_live_binding_matches \
+                   "$HERDR_SES" "$HERDR_PROJECTION_ID" "$HERDR_WORKSPACE_ID" \
+                   "$HERDR_TAB_ID" "$HERDR_PANE_ID" "$HERDR_PARENT_WORKSPACE_ID" \
+                   "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W" \
+                 && fm_backend_herdr_projection_journal_bind \
+                   "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_HOME_ID" "$HERDR_SES" \
+                   "$HERDR_WORKSPACE_ID" "$HERDR_TAB_ID" "$HERDR_PANE_ID" \
+                   "$HERDR_PARENT_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W"; then
+                :
+              else
+                echo "warning: herdr presentation could not publish an exact restart binding; this task will use flat fallback after a restart" >&2
+              fi
             fi
           fi
         else
@@ -2002,18 +2011,10 @@ EOF
       exit 1
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
-    # ponytail: rename workspace/tab when a captain-visible label is given.
-    # Projected layout renames the dedicated workspace; flat layout renames the
-    # task tab (the workspace is shared).
-    if [ "$LABEL_SET" -eq 1 ] && [ -n "$LABEL" ]; then
-      if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
-        fm_backend_herdr_workspace_rename "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$LABEL" >/dev/null 2>&1 || true
-      else
-        fm_backend_herdr_tab_rename "$HERDR_SES" "$HERDR_TAB_ID" "$LABEL" >/dev/null 2>&1 || true
-      fi
-    elif [ "$LABEL_SET" -eq 0 ]; then
-      echo "warning: herdr workspace label follows AGENTS.md MAXIMUM RULE — use --label '<Thing> · <plain job>' for captain-visible names" >&2
-    fi
+    # ponytail: projected layout uses --label at workspace creation time (above
+    # the HERDR_PROJECTED block), flat layout records label= in meta only.
+    # The warning fires for every herdr spawn without an explicit label.
+    [ "$LABEL_SET" -eq 1 ] || echo "warning: herdr spawn without --label; the visible-names contract (AGENTS.md section 1) requires captain-visible labels in '<Thing> · <plain job>' format" >&2
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1
