@@ -1289,6 +1289,40 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
   pass "herdr presentation create: exact response IDs yield one normal task pane with no workspace-close authority"
 }
 
+test_projection_create_applies_custom_label() {
+  local dir state log resp fb out label_log
+  dir="$TMP_ROOT/projection-custom-label"; state="$dir/state"; mkdir -p "$dir/responses" "$state"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"workspace":{"workspace_id":"w9"},"tab":{"tab_id":"w9:t1"},"root_pane":{"pane_id":"w9:p1"}}}\n' > "$resp/1.out"
+  printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-custom","workspace_id":"w9"}]}}\n' > "$resp/3.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/4.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/5.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/6.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-custom","workspace_id":"w9"}]}}\n' > "$resp/7.out"
+  printf '{"error":{"code":"pane_not_found"}}\n' > "$resp/9.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-custom","workspace_id":"w9"}]}}\n' > "$resp/10.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/11.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_projection_focus_snapshot() { printf "captain-ws\tcaptain-tab"; }
+      fm_backend_herdr_projection_focus_restore() { return 0; }
+      fm_backend_herdr_projection_create_task /tmp/proj "Door Panel · fix clearance" fm-task-custom || exit 1
+      printf "%s %s %s %s %s\n" \
+        "$FM_BACKEND_HERDR_PROJECTION_WORKSPACE_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_TAB_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_PANE_ID"
+    ' "$ROOT" "$state") || fail "projection create with custom label should succeed: $out"
+  [ "$out" = "w9 w9:t1 w9:p1 w9:t2 w9:p2" ] || fail "projection create did not retain exact response IDs: $out"
+  assert_contains "$(cat "$log")" $'workspace\x1fcreate\x1f--cwd\x1f/tmp/proj\x1f--label\x1fDoor Panel · fix clearance\x1f--no-focus' \
+    "projection workspace create did not use the custom --label"
+  pass "herdr presentation create: custom --label is passed through to workspace create"
+}
+
 test_projection_create_never_closes_a_concurrent_same_label_tab() {
   local dir log resp fb out status
   dir="$TMP_ROOT/projection-concurrent-tab"; mkdir -p "$dir/responses"
@@ -4399,6 +4433,7 @@ test_presentation_preference_reports_three_distinct_states
 test_projection_journal_is_atomic_and_uses_128_bit_token
 test_projection_journal_v2_binds_and_advances_exact_endpoint
 test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane
+test_projection_create_applies_custom_label
 test_projection_create_never_closes_a_concurrent_same_label_tab
 test_projection_focus_snapshot_requires_exact_workspace_and_tab
 test_projection_close_restores_exact_prior_focus

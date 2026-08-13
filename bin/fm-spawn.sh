@@ -866,6 +866,10 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
     exit 1
   fi
+  if [ -n "$LABEL" ]; then
+    echo "error: --label is single-task only; label each task individually" >&2
+    exit 1
+  fi
   rc=0
   shared_args=()
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")

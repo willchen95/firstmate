@@ -166,6 +166,24 @@ test_meta_omits_label_when_unset() {
   pass "spawn omits label= from state/<id>.meta and skips the herdr warning on tmux"
 }
 
+# --- batch dispatch guard ----------------------------------------------------
+
+test_rejects_label_on_batch_spawn() {
+  local home output rc
+  # Minimal home with no crew-dispatch.json so the harness check passes.
+  home="$TMP_ROOT/batch-label-refusal"
+  mkdir -p "$home/config" "$home/state" "$home/data"
+  printf '%s\n' "$$" > "$home/state/.lock"
+  printf 'claude\n' > "$home/config/crew-harness"
+  output=$(FM_HOME="$home" FM_SPAWN_NO_GUARD=1 bash "$ROOT/bin/fm-spawn.sh" \
+    task1=repo1 --label 'Door Panel · fix clearance' \
+    --mode no-mistakes --yolo off 2>&1) \
+    && { fail "expected failure for --label + batch"; return; } || rc=$?
+  echo "$output" | grep -q "error: --label is single-task" \
+    || fail "wrong error for --label on batch spawn: $output"
+  pass "--label on batch dispatch is refused with a single-task error"
+}
+
 # --- run -------------------------------------------------------------------
 
 test_rejects_newlines_in_label
@@ -177,3 +195,4 @@ test_near_token_suffix_passes_validation
 test_valid_label_passes_validation
 test_meta_records_label
 test_meta_omits_label_when_unset
+test_rejects_label_on_batch_spawn
