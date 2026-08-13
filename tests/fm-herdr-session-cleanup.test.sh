@@ -202,15 +202,15 @@ write_v1() { # <id> [token]
   } > "$FM_STATE_OVERRIDE/$id.herdr-presentation"
 }
 
-write_v2() { # <home> <workspace> <tab> <pane>
-  local home=$1 workspace=$2 tab=$3 pane=$4
+write_v2() { # <home> <workspace> <tab> <pane> [workspace-label]
+  local home=$1 workspace=$2 tab=$3 pane=$4 label=${5:-$TITLE}
   {
     printf 'version=2\n'
     printf 'task_id=%s\n' "$ID"
     printf 'projection_id=%s\n' "$TOKEN"
     printf 'home=%s\n' "$home"
     printf 'session=test\nworkspace_id=%s\ntab_id=%s\npane_id=%s\n' "$workspace" "$tab" "$pane"
-    printf 'parent_workspace_id=w1\nparent_label=firstmate\nworkspace_label=%s\ntask_label=fm-%s\n' "$TITLE" "$ID"
+    printf 'parent_workspace_id=w1\nparent_label=firstmate\nworkspace_label=%s\ntask_label=fm-%s\n' "$label" "$ID"
   } > "$FM_STATE_OVERRIDE/$ID.herdr-presentation"
 }
 
@@ -281,6 +281,29 @@ reset_fixture; : > "$FIXTURE_DIR/error-workspace-get"; assert_preserved "unreada
 reset_fixture; : > "$FIXTURE_DIR/race"; assert_preserved "revalidation race"
 reset_fixture; printf '%s\n' "$TAB" > "$FIXTURE_DIR/active-tab"; assert_preserved "active target"
 reset_fixture; : > "$FIXTURE_DIR/focus-refuse"; assert_preserved "focus refusal"
+
+CUSTOM_TITLE='Door Panel · fix clearance'
+reset_fixture
+printf '%s\n' "$CUSTOM_TITLE" > "$FIXTURE_DIR/title"
+write_v2 "$FM_HOME" "$WS" "$TAB" "$PANE" "$CUSTOM_TITLE"
+fm_herdr_session_cleanup >/dev/null 2>&1
+[ ! -e "$FM_STATE_OVERRIDE/$ID.herdr-presentation" ] || fail "custom-label v2 cleanup kept the journal"
+[ "$(wc -l < "$CLOSE_LOG" | tr -d ' ')" = 1 ] || fail "custom-label v2 cleanup did not close exactly once"
+pass "custom --label stale projection is discovered via its bound v2 journal and retired"
+
+reset_fixture; printf '%s\n' "$CUSTOM_TITLE" > "$FIXTURE_DIR/title"
+assert_preserved "custom-label title with only a v1 journal"
+reset_fixture; printf '%s\n' "$CUSTOM_TITLE" > "$FIXTURE_DIR/title"
+write_v2 "$FM_HOME" w9 "$TAB" "$PANE" "$CUSTOM_TITLE"
+assert_preserved "custom-label v2 journal bound to a different workspace"
+reset_fixture; printf '%s\n' "$CUSTOM_TITLE" > "$FIXTURE_DIR/title"
+write_v2 "$FM_HOME" "$WS" "$TAB" "$PANE" "$CUSTOM_TITLE"
+: > "$FIXTURE_DIR/duplicate-token"
+assert_preserved "custom-label candidate while its token appears elsewhere"
+reset_fixture; printf '%s\n' "$CUSTOM_TITLE" > "$FIXTURE_DIR/title"
+write_v2 "$FM_HOME" "$WS" "$TAB" "$PANE" "$CUSTOM_TITLE"
+printf 'live\n' > "$FIXTURE_DIR/agent"
+assert_preserved "custom-label candidate with a registered agent"
 
 INTEGRATION_ROOT="$TMP_ROOT/bootstrap-integration"
 mkdir -p "$INTEGRATION_ROOT/home/state" "$INTEGRATION_ROOT/home/data" "$INTEGRATION_ROOT/home/config"

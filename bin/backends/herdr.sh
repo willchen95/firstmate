@@ -2426,12 +2426,15 @@ fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
 # Missing matches safely degrade to the normal flat workspace.
 # One or more matches allow flat fallback only when every pane is positively
 # dead or agent-free; a live or unknown pane refuses a duplicate launch.
+# A custom --label workspace never carries the " · p:<token>" suffix, so a
+# version 2 journal's bound workspace_id joins the inspection set directly.
 fm_backend_herdr_projection_recovery_allows_flat() {  # <session> <journal> <task-id>
-  local session=$1 journal=$2 id=$3 token list wsids count wsid panes pane_ids pane state
-  token=$(fm_backend_herdr_projection_journal_token "$journal" "$id") || {
+  local session=$1 journal=$2 id=$3 token list wsids bound_wsid count wsid panes pane_ids pane state
+  fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || {
     echo "error: malformed herdr presentation journal for $id; refusing duplicate launch" >&2
     return 1
   }
+  token=$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID
   fm_backend_herdr_server_ensure "$session" || {
     echo "error: could not inspect the quarantined herdr presentation for $id; refusing duplicate launch" >&2
     return 1
@@ -2446,6 +2449,11 @@ fm_backend_herdr_projection_recovery_allows_flat() {  # <session> <journal> <tas
   fi
   wsids=$(printf '%s' "$list" | jq -r --arg suffix " · p:$token" \
     '.result.workspaces[]? | select((.label | type) == "string" and (.label | endswith($suffix))) | .workspace_id' 2>/dev/null)
+  if [ -n "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" ]; then
+    bound_wsid=$(printf '%s' "$list" | jq -r --arg wid "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" \
+      '.result.workspaces[]? | select((.workspace_id | type) == "string" and .workspace_id == $wid) | .workspace_id' 2>/dev/null)
+    wsids=$(printf '%s\n%s\n' "$wsids" "$bound_wsid" | awk 'NF && !seen[$0]++')
+  fi
   count=$(printf '%s\n' "$wsids" | awk 'NF { n += 1 } END { print n + 0 }')
   if [ "$count" -eq 0 ]; then
     echo "warning: no exact herdr presentation token match for $id; leaving any stale space untouched and spawning flat" >&2
