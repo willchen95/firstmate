@@ -478,8 +478,9 @@ else
   esac
   retries=${FM_SEND_RETRIES:-3}
   sleep_s=${FM_SEND_SLEEP:-0.4}
-  # Type once, submit, verify. Only exact empty confirms delivery; every other
-  # verdict preserves the loud refusal boundary.
+  # Type once, submit, verify. empty or queued-busy (hoisted read-back proved
+  # the message landed in a busy composer) confirm delivery; every other verdict
+  # preserves the loud refusal boundary.
   send_rc=0
   if [ "$TARGET_BACKEND" = remote ]; then
     if "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" fm-remote-secondmate-control.sh send "$TARGET_REMOTE_ID" "$MESSAGE" < /dev/null >/dev/null; then
@@ -506,7 +507,7 @@ else
     exit 1
   fi
   case "$verdict" in
-    empty)
+    empty|queued-busy)
       ;;
     send-failed)
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then

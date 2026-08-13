@@ -1832,6 +1832,26 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+test_inject_msg_accepts_queued_busy() {
+  local dir state
+  dir=$(make_supercase inject-queued-busy)
+  state="$dir/state"
+  afk_enter "$state"
+  (
+    fm_backend_target_exists() { return 0; }
+    pane_is_busy() { return 1; }
+    fm_backend_composer_state() { printf 'empty'; }
+    fm_backend_send_text_submit() {
+      [ "$1" = herdr ] && [ "$2" = "default:w1:p2" ] || fail "unexpected send_text_submit args: $1 $2"
+      case "$3" in *"hello"*) : ;; *) fail "digest text missing from send_text_submit: $3" ;; esac
+      printf 'queued-busy'
+    }
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" inject_msg "hello" "$state" \
+      || fail "inject_msg should succeed when send_text_submit returns queued-busy"
+  ) || fail "queued-busy inject_msg subshell failed"
+  pass "inject_msg: accepts queued-busy verdict as proof-carrying delivery (hoisted read-back confirmed)"
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -1930,4 +1950,5 @@ test_inject_msg_herdr_composer_guard_defers
 test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
+test_inject_msg_accepts_queued_busy
 test_inject_msg_defers_on_unrecognized_composer_state

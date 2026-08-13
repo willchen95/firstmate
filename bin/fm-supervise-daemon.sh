@@ -1164,9 +1164,12 @@ inject_msg() {  # <message> [state]
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s")
-  if [ "$verdict" = empty ]; then
-    return 0  # Backend confirmed the submit.
-  fi
+  case "$verdict" in
+    empty) return 0 ;;  # Backend confirmed the submit.
+    queued-busy)
+      log "inject queued: supervisor pane was busy, message accepted for next turn (verdict=queued-busy)"
+      return 0 ;;
+  esac
   log "inject failed: submit unconfirmed after $retries retries (verdict=$verdict, text may be in composer)"
   return 1
 }

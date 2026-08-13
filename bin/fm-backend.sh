@@ -721,21 +721,56 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
   esac
 }
 
+# fm_backend_send_condense: collapse whitespace, trim box-drawing chars,
+# so a read-back text match survives ANSI/border rendering differences.
+fm_backend_send_condense() {
+  tr -d ' \t\r\n' | sed -e 's/│//g' -e 's/┃//g' -e 's/|//g'
+}
+
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the backend's
-# proof-carrying verdict; callers require exact empty for confirmed delivery.
+# proof-carrying verdict; callers accept empty or queued-busy for delivery.
+# When the backend returns an inconclusive verdict (pending or unknown),
+# a hoisted read-back checks whether the pane is busy and the typed text
+# is visible in a capture, proving the message was queued for the next
+# agent turn. The proof-carrying queued-busy verdict lets daemon inject_msg
+# and fm-send.sh both benefit without duplicating the rescue caller-side.
 fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
-  local backend=$1
+  local backend=$1 target text retries sleep_s settle expected_label verdict pass_args
   shift
+  target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 expected_label=${6:-}
+  pass_args=("$target" "$text" "$retries" "$sleep_s" "$settle")
+  [ -n "$expected_label" ] && pass_args+=("$expected_label")
   fm_backend_source "$backend" || return 1
   case "$backend" in
-    tmux) fm_backend_tmux_send_text_submit "$@" ;;
-    herdr) fm_backend_herdr_send_text_submit "$@" ;;
-    zellij) fm_backend_zellij_send_text_submit "$@" ;;
-    orca) fm_backend_orca_send_text_submit "$@" ;;
-    cmux) fm_backend_cmux_send_text_submit "$@" ;;
+    tmux) verdict=$(fm_backend_tmux_send_text_submit "${pass_args[@]}") ;;
+    herdr) verdict=$(fm_backend_herdr_send_text_submit "${pass_args[@]}") ;;
+    zellij) verdict=$(fm_backend_zellij_send_text_submit "${pass_args[@]}") ;;
+    orca) verdict=$(fm_backend_orca_send_text_submit "${pass_args[@]}") ;;
+    cmux) verdict=$(fm_backend_cmux_send_text_submit "${pass_args[@]}") ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; return 1 ;;
   esac
+  # Hoisted busy-queued read-back: when the backend returned pending or
+  # unknown (inconclusive), check whether the pane is provably busy and our
+  # typed text appears in a bounded capture. If both hold, the harness queued
+  # the message for the next turn — a proof-carrying busy-queued delivery.
+  case "$verdict" in
+    pending|unknown)
+      if fm_backend_busy_state "$backend" "$target" | grep -qx busy 2>/dev/null; then
+        local cap probe hay
+        cap=$(fm_backend_capture "$backend" "$target" 80 "$expected_label" 2>/dev/null) || cap=
+        if [ -n "$cap" ]; then
+          probe=$(printf '%s' "$text" | fm_backend_send_condense)
+          probe=${probe:0:48}
+          if [ -n "$probe" ]; then
+            hay=$(printf '%s' "$cap" | fm_backend_send_condense)
+            case "$hay" in *"$probe"*) verdict=queued-busy ;; esac
+          fi
+        fi
+      fi
+      ;;
+  esac
+  printf '%s' "$verdict"
 }
 
 # fm_backend_kill: remove the task's session endpoint (best-effort; a
