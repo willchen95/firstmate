@@ -544,7 +544,8 @@ else
   if [ -n "$RESOLVE_KEYS" ]; then
     fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
   fi
-  # Submit landed with exact empty. Confirmation only proves the text was
+  # Submit landed: exact empty, or queued-busy (the dispatch layer's read-back
+  # proved a busy composer queued the text). Confirmation only proves the text was
   # accepted; the harness still needs a beat to spin up the
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0

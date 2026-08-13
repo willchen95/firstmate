@@ -1104,11 +1104,13 @@ window_for_task() {  # <task-key> [state]
 #   - TYPE ONCE, then submit with Enter. Never retype the digest: a swallowed
 #     Enter leaves our text in the composer, and retyping would concatenate two
 #     sentinel-prefixed digests into one corrupted turn.
-#   - SUBMIT ACK = the backend submit primitive reports `empty` after Enter.
-#     For tmux that means a cleared composer; for herdr's normal idle-baseline
-#     path it means native agent-state observed a real turn start.
-#     Pending means Enter was swallowed; unknown is treated as undelivered by
-#     this strict daemon path.
+#   - SUBMIT ACK = the backend submit primitive reports `empty` after Enter,
+#     or `queued-busy` (the dispatch layer's hoisted read-back proved a busy
+#     pane holds the typed digest queued for the next turn). For tmux `empty`
+#     means a cleared composer; for herdr's normal idle-baseline path it means
+#     native agent-state observed a real turn start.
+#     A bare pending means Enter was swallowed; a bare unknown is treated as
+#     undelivered by this strict daemon path.
 #   - COMPOSER GUARD before typing: if the cursor line already has real content
 #     after dim/faint ghost text and borders are ignored (a human's half-typed
 #     line, or a previous injection's unsent text), defer entirely - injecting

@@ -719,6 +719,106 @@ test_send_tmux_contract() {
   pass "fm-send.sh: explicit tmux targets are verified; text types once and submits with Enter"
 }
 
+# --- dispatch-layer busy-queued read-back ------------------------------------
+# fm_backend_send_text_submit upgrades an inconclusive backend verdict
+# (pending/unknown) to queued-busy only when the pane is provably busy AND the
+# capture holds THIS message's distinctive middle - a stale digest sharing the
+# constant operational envelope head and fixed scaffold tail must never count
+# as proof. Backend send/busy/capture primitives are mocked per subshell.
+test_send_text_submit_busy_queued_readback() {
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-operational-input.sh"
+  local old_digest new_digest out
+  fm_operational_input_encode away-supervisor \
+    'Supervisor escalate (1 event(s)): task a1 went stale after 40m (pre-read; re-arm not needed — watcher daemon-managed)' \
+    old_digest || fail "could not encode the stale fixture digest"
+  fm_operational_input_encode away-supervisor \
+    'Supervisor escalate (1 event(s)): task b2 exited unexpectedly rc=1 (pre-read; re-arm not needed — watcher daemon-managed)' \
+    new_digest || fail "could not encode the current fixture digest"
+
+  # pending + provably busy + this digest visible (wrapped across bordered
+  # capture lines) -> queued-busy.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'pending'; }
+    fm_backend_busy_state() { printf 'busy'; }
+    fm_backend_capture() { printf '│ %s │\n│ %s │\n' "${new_digest:0:60}" "${new_digest:60}"; }
+    fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
+  )
+  [ "$out" = queued-busy ] \
+    || fail "busy pane with the typed digest visible should upgrade pending to queued-busy (got '${out:-}')"
+
+  # unknown is the other inconclusive verdict; same proof, same upgrade.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'unknown'; }
+    fm_backend_busy_state() { printf 'busy'; }
+    fm_backend_capture() { printf '%s\n' "$new_digest"; }
+    fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
+  )
+  [ "$out" = queued-busy ] \
+    || fail "busy pane with the typed digest visible should upgrade unknown to queued-busy (got '${out:-}')"
+
+  # A message shorter than the probe window is matched whole.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'pending'; }
+    fm_backend_busy_state() { printf 'busy'; }
+    fm_backend_capture() { printf 'transcript noise\nhello supervisor\n'; }
+    fm_backend_send_text_submit tmux sess:w1 "hello supervisor" 3 0 0
+  )
+  [ "$out" = queued-busy ] \
+    || fail "a short visible message on a busy pane should upgrade to queued-busy (got '${out:-}')"
+
+  # Regression: a DIFFERENT stale digest in scrollback shares the constant
+  # envelope head and scaffold tail with the current digest; that must not
+  # convert - the current message was dropped, so the strict verdict stands.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'pending'; }
+    fm_backend_busy_state() { printf 'busy'; }
+    fm_backend_capture() { printf '%s\n' "$old_digest"; }
+    fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
+  )
+  [ "$out" = pending ] \
+    || fail "a stale digest sharing the constant envelope/scaffold must not prove delivery (got '${out:-}')"
+
+  # Not provably busy: the read-back never runs, even with the text visible.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'pending'; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf '%s\n' "$new_digest"; }
+    fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
+  )
+  [ "$out" = pending ] \
+    || fail "an idle pane must keep the inconclusive verdict untouched (got '${out:-}')"
+
+  # Text absent from the capture: busy alone is no proof.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'pending'; }
+    fm_backend_busy_state() { printf 'busy'; }
+    fm_backend_capture() { printf 'transcript noise only\n'; }
+    fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
+  )
+  [ "$out" = pending ] \
+    || fail "a busy pane without the typed text must keep the inconclusive verdict (got '${out:-}')"
+
+  # Conclusive verdicts pass through untouched.
+  out=$(
+    _FM_BACKEND_TMUX_SOURCED=1
+    fm_backend_tmux_send_text_submit() { printf 'empty'; }
+    fm_backend_busy_state() { printf 'busy'; }
+    fm_backend_capture() { printf '%s\n' "$new_digest"; }
+    fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
+  )
+  [ "$out" = empty ] \
+    || fail "a conclusive empty verdict must pass through the read-back untouched (got '${out:-}')"
+
+  pass "fm_backend_send_text_submit: busy-queued read-back proves this message (distinctive middle), never a stale digest"
+}
+
 # --- old vs new: fm-peek.sh --------------------------------------------------
 
 make_peek_fakebin() {  # <dir> <capture-output> -> echoes fakebin dir
@@ -1131,6 +1231,7 @@ test_meta_get_and_backend_of_meta
 test_resolve_selector_three_forms
 test_backend_of_selector_matches_explicit_target_meta
 test_send_tmux_contract
+test_send_text_submit_busy_queued_readback
 test_peek_conformance_old_vs_new
 test_spawn_symlinked_project_prefix_avoids_false_refusal
 test_teardown_conformance_old_vs_new

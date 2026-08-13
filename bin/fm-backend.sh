@@ -754,6 +754,11 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   # unknown (inconclusive), check whether the pane is provably busy and our
   # typed text appears in a bounded capture. If both hold, the harness queued
   # the message for the next turn — a proof-carrying busy-queued delivery.
+  # The probe is a centered window of the condensed text, not its head or
+  # tail: firstmate's operational digests share a constant condensed envelope
+  # head and fixed scaffold tail, so an end-anchored sample matches any stale
+  # digest already in the pane's scrollback and the "proof" is vacuous. Only
+  # the middle varies per message; a miss just preserves the strict verdict.
   case "$verdict" in
     pending|unknown)
       if fm_backend_busy_state "$backend" "$target" | grep -qx busy 2>/dev/null; then
@@ -761,7 +766,9 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
         cap=$(fm_backend_capture "$backend" "$target" 80 "$expected_label" 2>/dev/null) || cap=
         if [ -n "$cap" ]; then
           probe=$(printf '%s' "$text" | fm_backend_send_condense)
-          probe=${probe:0:48}
+          if [ "${#probe}" -gt 48 ]; then
+            probe=${probe:$(( (${#probe} - 48) / 2 )):48}
+          fi
           if [ -n "$probe" ]; then
             hay=$(printf '%s' "$cap" | fm_backend_send_condense)
             case "$hay" in *"$probe"*) verdict=queued-busy ;; esac
