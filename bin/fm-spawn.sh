@@ -334,6 +334,11 @@ case "$LABEL" in
   firstmate|2ndmate-*) echo "error: --label '$LABEL' collides with the home workspace label; choose a task-specific name" >&2; exit 1 ;;
   '└'*) echo "error: --label '$LABEL' starts with a '└' prefix that conflicts with the projection-child label pattern; choose a plain name" >&2; exit 1 ;;
 esac
+LABEL_TOKEN_SUFFIX_RE=' · p:[A-Za-z0-9_-]{22}$'
+if [[ "$LABEL" =~ $LABEL_TOKEN_SUFFIX_RE ]]; then
+  echo "error: --label '$LABEL' ends with a ' · p:<token>' suffix reserved for the projection token grammar; choose a plain name" >&2
+  exit 1
+fi
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.

@@ -2824,6 +2824,35 @@ test_projection_recovery_custom_label_inspects_bound_workspace() {
   pass "herdr presentation recovery: a custom-labeled bound workspace is inspected via the journal's workspace_id"
 }
 
+test_projection_endpoint_match_requires_v2_bound_workspace() {
+  local dir state home home_real log resp fb journal
+  dir="$TMP_ROOT/endpoint-custom"; state="$dir/state"; home="$dir/home"
+  mkdir -p "$dir/responses" "$state" "$home"
+  home_real=$(cd "$home" && pwd -P)
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_projection_journal_create "$1" task-ep1 >/dev/null || exit 1
+    fm_backend_herdr_projection_journal_bind \
+      "$1/task-ep1.herdr-presentation" task-ep1 "$2" fmtest \
+      w2 w2:t2 w2:p2 w1 firstmate "Door Panel · fix clearance" fm-task-ep1
+  ' "$ROOT" "$state" "$home_real" || fail "could not create custom-label endpoint fixture"
+  journal="$state/task-ep1.herdr-presentation"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"Door Panel · fix clearance"},{"workspace_id":"w3","label":"other"}]}}\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w2 "$1" task-ep1' "$ROOT" "$journal" \
+    || fail "custom-labeled endpoint matching its v2 bound workspace should correlate"
+
+  : > "$log"; rm -f "$resp"/*.out "$resp"/*.exit "$resp/.count"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"Door Panel · fix clearance"},{"workspace_id":"w3","label":"other"}]}}\n' > "$resp/1.out"
+  if PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w3 "$1" task-ep1' "$ROOT" "$journal"; then
+    fail "an endpoint workspace differing from the v2 journal binding must stay quarantined"
+  fi
+  pass "herdr presentation endpoint match: v2 custom-label fallback requires the journal's bound workspace"
+}
+
 # --- workspace_find: scoped to THIS home's own label, not just any match ----
 
 test_workspace_find_matches_only_this_homes_own_label() {
@@ -4414,6 +4443,7 @@ test_projection_reclaim_refusal_matrix_is_non_mutating
 test_projection_reclaim_replaces_only_exact_husk_and_advances_binding
 test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk
 test_projection_recovery_custom_label_inspects_bound_workspace
+test_projection_endpoint_match_requires_v2_bound_workspace
 test_workspace_find_matches_only_this_homes_own_label
 test_list_live_scoped_to_this_homes_workspace_only
 test_parse_target

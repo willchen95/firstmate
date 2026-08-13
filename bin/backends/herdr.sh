@@ -2500,15 +2500,20 @@ EOF
 # This verdict never authorizes a Herdr mutation.
 fm_backend_herdr_projection_endpoint_matches_journal() {  # <session> <workspace-id> <journal> <task-id>
   local session=$1 workspace_id=$2 journal=$3 id=$4 token list matches
-  token=$(fm_backend_herdr_projection_journal_token "$journal" "$id") || return 1
+  fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || return 1
+  token=$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
   printf '%s' "$list" | jq -e '(.result.workspaces | type) == "array"' >/dev/null 2>&1 || return 1
   # Token-suffix match: exact label ending matches the canonical projection pattern.
   matches=$(printf '%s' "$list" | jq -r --arg suffix " · p:$token" \
     '.result.workspaces[]? | select((.label | type) == "string" and (.label | endswith($suffix))) | .workspace_id' 2>/dev/null)
   [ "$matches" = "$workspace_id" ] && return 0
-  # Custom label fallback: match by workspace_id directly. The workspace_label
-  # is presentation-only, not authority.
+  # Custom label fallback: the workspace_label is presentation-only, not
+  # authority. A version 2 journal must bind this exact workspace_id; a
+  # version 1 journal records no binding, so presence is the only check left.
+  if [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ]; then
+    [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$workspace_id" ] || return 1
+  fi
   printf '%s' "$list" | jq -e --arg wid "$workspace_id" \
     '.result.workspaces[]? | select(.workspace_id == $wid) | length > 0' >/dev/null 2>&1
 }

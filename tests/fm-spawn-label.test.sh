@@ -104,6 +104,24 @@ test_rejects_projection_child_pattern() {
   pass "--label rejects labels starting with '└'"
 }
 
+test_rejects_token_suffix_pattern() {
+  local output rc
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label 'Door Panel · p:AbCdEfGhIjKlMnOpQrStUv' 2>&1) && { fail "expected failure"; return; } || rc=$?
+  echo "$output" | grep -q "suffix reserved for the projection token grammar" \
+    || fail "wrong error for token-suffix label: $output"
+  pass "--label rejects a ' · p:<22-char-token>' suffix"
+}
+
+test_near_token_suffix_passes_validation() {
+  local output rc
+  # 21 token characters is not the reserved 22-char grammar, so this label is
+  # allowed and the spawn proceeds to the --mode requirement.
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label 'Door Panel · p:AbCdEfGhIjKlMnOpQrStU' 2>&1) && { fail "expected failure (--mode required)"; return; } || rc=$?
+  echo "$output" | grep -q "ship spawns require --mode" \
+    || fail "expected --mode error after near-token label, got: $output"
+  pass "a non-token-shaped ' · p:' label passes validation (reaches --mode check)"
+}
+
 test_valid_label_passes_validation() {
   local output rc
   # A valid label should pass the label checks and fail on --mode requirement
@@ -154,6 +172,8 @@ test_rejects_newlines_in_label
 test_rejects_carriage_return_in_label
 test_rejects_home_workspace_label_collision
 test_rejects_projection_child_pattern
+test_rejects_token_suffix_pattern
+test_near_token_suffix_passes_validation
 test_valid_label_passes_validation
 test_meta_records_label
 test_meta_omits_label_when_unset
