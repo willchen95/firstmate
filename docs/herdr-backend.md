@@ -215,6 +215,7 @@ Text is typed once; only Enter is retried.
 On an idle or done native baseline, submit confirmation waits for `working` or `blocked` across a bounded polling window.
 On an already active or unreadable baseline, it falls back to conservative composer clearance.
 A fully unreadable target stops retrying and reports unknown.
+Exhausted Enter retries report a composer-proven `pending` only from a busy pre-Enter baseline whose composer read proved the typed text - the sole verdict eligible for the dispatch layer's `queued-busy` read-back; idle-baseline exhaustion (the composer was never read, so a later busy pane could belong to a concurrent writer) and an ambiguous composer both report `pending-unproven`, which is never upgraded to a delivery claim.
 The poll density bounds the residual possibility of an extremely fast complete turn; a missed transition can cause only a redundant Enter on an empty composer, never duplicate message text.
 
 `pane read --lines N` can return empty output when N is below the viewport height.

@@ -3440,8 +3440,24 @@ test_send_text_submit_detects_swallowed_enter() {
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "hello captain" 2 0.01 0.01' "$ROOT" )
-  [ "$out" = pending ] || fail "send_text_submit should report pending once retries are exhausted with agent_status never going busy, got '$out'"
-  pass "fm_backend_herdr_send_text_submit: reports 'pending' when agent_status never reports working after retried Enters (swallowed)"
+  [ "$out" = pending-unproven ] || fail "send_text_submit should report pending-unproven once retries are exhausted with agent_status never going busy (composer never read, so a later busy pane is not attributable to this Enter), got '$out'"
+  pass "fm_backend_herdr_send_text_submit: reports 'pending-unproven' when agent_status never reports working after retried Enters (swallowed; not eligible for the busy-queued rescue)"
+}
+
+# Busy-baseline exhaustion with an AMBIGUOUS composer read must not collapse
+# into the composer-proven 'pending' the dispatch layer's busy-queued
+# read-back is allowed to upgrade: without positive proof the typed text sits
+# in the composer, busy plus a capture match cannot distinguish a queued
+# message from scrollback.
+test_send_text_submit_busy_baseline_ambiguous_composer_reports_pending_unproven() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/submit-busy-ambiguous"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/2.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state() { printf "pending-unproven"; }; fm_backend_herdr_send_text_submit default:w1:p2 "hello captain" 2 0.01 0.01' "$ROOT" )
+  [ "$out" = pending-unproven ] || fail "busy-baseline exhaustion with an ambiguous composer must report pending-unproven, not composer-proven pending, got '$out'"
+  pass "fm_backend_herdr_send_text_submit: a busy baseline whose composer reads stay ambiguous exhausts to 'pending-unproven', never the rescue-eligible 'pending'"
 }
 
 # Regression coverage for the 2026-07-03 incident using the NEW mechanism: a
@@ -3502,6 +3518,57 @@ test_send_text_submit_preexisting_working_does_not_false_confirm_swallowed_enter
   read_count=$(grep -c $'\x1f''pane'$'\x1f''read' "$log")
   [ "$read_count" -eq 2 ] || fail "preexisting-working confirmation should fall back to composer reads, made $read_count read(s)"
   pass "fm_backend_herdr_send_text_submit: preexisting working is not accepted as submit proof when the composer still holds the message"
+}
+
+# Regression for the false-delivery race the dispatch-layer busy-queued
+# read-back must not be exposed to: an idle herdr pane swallows every Enter
+# (agent-state stays idle across all retries; the composer is never read),
+# and a CONCURRENT writer starts a turn in the gap before the dispatch
+# layer's busy probe would run. The probe would read busy and the capture
+# still shows the typed text sitting unsent in the composer - upgrading that
+# to queued-busy would mark an undelivered message delivered. The adapter's
+# pending-unproven exhaustion verdict keeps the rescue from ever running.
+test_dispatch_herdr_idle_swallow_with_concurrent_turn_never_upgrades_to_queued_busy() {
+  local dir log resp fb out read_count
+  dir="$TMP_ROOT/dispatch-idle-swallow-race"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # 1: send-text  2: agent get -> idle (baseline)  3: enter  4: agent get -> idle
+  # 5: enter  6: agent get -> idle (retries exhausted)
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/2.out"
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/4.out"
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/6.out"
+  # 7/8: what a post-exhaustion busy probe and capture WOULD observe once the
+  # concurrent turn is running - working, and the text still in the composer.
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/7.out"
+  printf '  \xe2\x9d\xaf hello captain\n' > "$resp/8.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 2 0.01 0.01' "$ROOT" )
+  [ "$out" = pending-unproven ] || fail "an idle-baseline swallowed Enter must surface as pending-unproven through the dispatch layer, got '$out'"
+  read_count=$(grep -c $'\x1f''pane'$'\x1f''read' "$log")
+  [ "$read_count" -eq 0 ] || fail "the busy-queued read-back must never run for a non-composer-proven verdict, made $read_count pane read(s)"
+  pass "fm_backend_send_text_submit (herdr): an idle-baseline swallow with a concurrent turn starting before the busy probe stays a delivery failure instead of a false queued-busy"
+}
+
+# The composer-proven variant is still rescued end to end: a busy pre-Enter
+# baseline whose composer reads prove the typed text exhausts to 'pending',
+# and the dispatch layer's busy probe plus capture match upgrade it to the
+# proof-carrying queued-busy.
+test_dispatch_herdr_proven_busy_baseline_pending_upgrades_to_queued_busy() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/dispatch-proven-queued-busy"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # 1: send-text  2: agent get -> working (busy baseline)  3: enter
+  # 4: composer read -> our text  5: enter  6: composer read -> our text
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/2.out"
+  printf '  \xe2\x9d\xaf hello captain\n' > "$resp/4.out"
+  printf '  \xe2\x9d\xaf hello captain\n' > "$resp/6.out"
+  # 7: dispatch busy probe -> still working  8: bounded capture -> text visible
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/7.out"
+  printf 'transcript noise\n  \xe2\x9d\xaf hello captain\n' > "$resp/8.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr default:w1:p2 "hello captain" 2 0.01 0.01' "$ROOT" )
+  [ "$out" = queued-busy ] || fail "a composer-proven busy-baseline pending with a busy pane and the text in the capture should upgrade to queued-busy, got '$out'"
+  pass "fm_backend_send_text_submit (herdr): the composer-proven busy-baseline pending still receives the busy-queued rescue end to end"
 }
 
 # Regression for the submit-confirmation side of the 2026-07-07 incident:
@@ -4345,9 +4412,12 @@ test_wait_for_working_returns_unknown_when_never_readable
 test_wait_for_working_treats_blocked_as_submit_active
 test_send_text_submit_detects_landed_send
 test_send_text_submit_detects_swallowed_enter
+test_send_text_submit_busy_baseline_ambiguous_composer_reports_pending_unproven
 test_send_text_submit_popup_autocomplete_requires_second_enter
 test_send_text_submit_confirms_blocked_after_enter
 test_send_text_submit_preexisting_working_does_not_false_confirm_swallowed_enter
+test_dispatch_herdr_idle_swallow_with_concurrent_turn_never_upgrades_to_queued_busy
+test_dispatch_herdr_proven_busy_baseline_pending_upgrades_to_queued_busy
 test_send_text_submit_confirms_despite_codex_idle_tip_composer
 test_composer_state_codex_dynamic_idle_tip_reads_empty_when_faint
 test_composer_state_guard_still_refuses_real_pending_text_after_submit_confirmation_change

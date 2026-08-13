@@ -2713,17 +2713,24 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unprove
 #     are packed into the budget; real claude/codex measured first-working
 #     at 90-490ms, comfortably inside a several-hundred-ms, multiply-sampled
 #     window, so this has not been observed in practice. On the (unobserved)
-#     residual chance it happens, the verdict is "pending" and the caller
-#     never retypes - only re-sends Enter, which lands on an already-empty
+#     residual chance it happens, the verdict is "pending-unproven" and the
+#     caller never retypes - only re-sends Enter, which lands on an already-empty
 #     composer and is a no-op, not a duplicate delivery of <text> (see
 #     fm-send.sh/fm-supervise-daemon.sh: retyping only happens if a caller
 #     re-invokes this function from scratch with the same text after seeing
 #     an error, which is a human/escalation decision, not an automatic
 #     retry).
-# Echoes empty|pending|unknown|send-failed, a subset of the proof-carrying
-# submit vocabulary. Empty means confirmed submitted for every backend; how
-# each backend confirms it is an internal decision, and herdr's is no longer
-# literally "the composer read empty".
+# Echoes empty|pending|pending-unproven|unknown|send-failed, a subset of the
+# proof-carrying submit vocabulary. Empty means confirmed submitted for every
+# backend; how each backend confirms it is an internal decision, and herdr's
+# is no longer literally "the composer read empty". A final "pending" is
+# emitted ONLY from a busy pre-Enter baseline whose per-attempt composer read
+# positively proved the typed text - the one variant eligible for the
+# dispatch layer's busy-queued read-back (bin/fm-backend.sh). Idle-baseline
+# exhaustion (agent-state never went busy; the composer was never read, so a
+# later busy observation could belong to a concurrent writer, not this Enter)
+# and an ambiguous composer read both report "pending-unproven", which the
+# dispatch layer never upgrades to a delivery claim.
 fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
@@ -2747,8 +2754,13 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       unknown) printf 'unknown'; return 0 ;;
     esac
     i=$((i + 1))
-    [ "$i" -lt "$retries" ] || { printf 'pending'; return 0; }
+    [ "$i" -lt "$retries" ] || break
   done
+  if [ "$baseline" = busy ] && [ "$verdict" = pending ]; then
+    printf 'pending'
+  else
+    printf 'pending-unproven'
+  fi
 }
 
 # fm_backend_herdr_kill: remove the task's pane, best-effort (mirrors
