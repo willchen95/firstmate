@@ -727,6 +727,7 @@ test_send_tmux_contract() {
 # as proof. unknown (unreadable composer) is never rescued and passes through
 # as a delivery failure. Backend send/busy/capture primitives are mocked per
 # subshell.
+# shellcheck disable=SC2329 # Per-subshell mocks invoked indirectly by fm_backend_send_text_submit.
 test_send_text_submit_busy_queued_readback() {
   # shellcheck source=/dev/null
   . "$ROOT/bin/fm-operational-input.sh"
