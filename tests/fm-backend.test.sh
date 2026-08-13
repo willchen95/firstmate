@@ -720,11 +720,13 @@ test_send_tmux_contract() {
 }
 
 # --- dispatch-layer busy-queued read-back ------------------------------------
-# fm_backend_send_text_submit upgrades an inconclusive backend verdict
-# (pending/unknown) to queued-busy only when the pane is provably busy AND the
+# fm_backend_send_text_submit upgrades a pending backend verdict (text proven
+# in the composer) to queued-busy only when the pane is provably busy AND the
 # capture holds THIS message's distinctive middle - a stale digest sharing the
 # constant operational envelope head and fixed scaffold tail must never count
-# as proof. Backend send/busy/capture primitives are mocked per subshell.
+# as proof. unknown (unreadable composer) is never rescued and passes through
+# as a delivery failure. Backend send/busy/capture primitives are mocked per
+# subshell.
 test_send_text_submit_busy_queued_readback() {
   # shellcheck source=/dev/null
   . "$ROOT/bin/fm-operational-input.sh"
@@ -748,7 +750,9 @@ test_send_text_submit_busy_queued_readback() {
   [ "$out" = queued-busy ] \
     || fail "busy pane with the typed digest visible should upgrade pending to queued-busy (got '${out:-}')"
 
-  # unknown is the other inconclusive verdict; same proof, same upgrade.
+  # unknown is never rescued: with no composer proof, busy plus a text match
+  # cannot distinguish a queued message from scrollback, so the raw verdict
+  # passes through as a delivery failure.
   out=$(
     _FM_BACKEND_TMUX_SOURCED=1
     fm_backend_tmux_send_text_submit() { printf 'unknown'; }
@@ -756,8 +760,8 @@ test_send_text_submit_busy_queued_readback() {
     fm_backend_capture() { printf '%s\n' "$new_digest"; }
     fm_backend_send_text_submit tmux sess:w1 "$new_digest" 3 0 0
   )
-  [ "$out" = queued-busy ] \
-    || fail "busy pane with the typed digest visible should upgrade unknown to queued-busy (got '${out:-}')"
+  [ "$out" = unknown ] \
+    || fail "an unknown composer must never upgrade to queued-busy, even busy with text visible (got '${out:-}')"
 
   # A message shorter than the probe window is matched whole.
   out=$(

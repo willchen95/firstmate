@@ -730,17 +730,22 @@ fm_backend_send_condense() {
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the backend's
 # proof-carrying verdict; callers accept empty or queued-busy for delivery.
-# When the backend returns an inconclusive verdict (pending or unknown),
-# a hoisted read-back checks whether the pane is busy and the typed text
-# is visible in a capture, proving the message was queued for the next
-# agent turn. The proof-carrying queued-busy verdict lets daemon inject_msg
-# and fm-send.sh both benefit without duplicating the rescue caller-side.
+# When the backend returns a pending verdict (the classifier proved the
+# typed text sits in the composer), a hoisted read-back checks whether the
+# pane is busy and the typed text is visible in a capture, proving the
+# message was queued for the next agent turn. The proof-carrying queued-busy
+# verdict lets daemon inject_msg and fm-send.sh both benefit without
+# duplicating the rescue caller-side. An unknown verdict is never rescued:
+# with no composer proof, a busy pane plus a text match cannot distinguish
+# a queued message from scrollback, so unknown stays a delivery failure.
 fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
   local backend=$1 target text retries sleep_s settle expected_label verdict pass_args
   shift
   target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 expected_label=${6:-}
   pass_args=("$target" "$text" "$retries" "$sleep_s" "$settle")
-  [ -n "$expected_label" ] && pass_args+=("$expected_label")
+  if [ -n "$expected_label" ]; then
+    pass_args+=("$expected_label")
+  fi
   fm_backend_source "$backend" || return 1
   case "$backend" in
     tmux) verdict=$(fm_backend_tmux_send_text_submit "${pass_args[@]}") ;;
@@ -750,17 +755,20 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
     cmux) verdict=$(fm_backend_cmux_send_text_submit "${pass_args[@]}") ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; return 1 ;;
   esac
-  # Hoisted busy-queued read-back: when the backend returned pending or
-  # unknown (inconclusive), check whether the pane is provably busy and our
+  # Hoisted busy-queued read-back: when the backend returned pending (text
+  # proven in the composer), check whether the pane is provably busy and our
   # typed text appears in a bounded capture. If both hold, the harness queued
   # the message for the next turn — a proof-carrying busy-queued delivery.
+  # unknown (unreadable composer) is never rescued: without composer proof,
+  # a short message matching scrollback would fake delivery of a swallowed
+  # send, so the raw verdict passes through as a failure.
   # The probe is a centered window of the condensed text, not its head or
   # tail: firstmate's operational digests share a constant condensed envelope
   # head and fixed scaffold tail, so an end-anchored sample matches any stale
   # digest already in the pane's scrollback and the "proof" is vacuous. Only
   # the middle varies per message; a miss just preserves the strict verdict.
   case "$verdict" in
-    pending|unknown)
+    pending)
       if fm_backend_busy_state "$backend" "$target" | grep -qx busy 2>/dev/null; then
         local cap probe hay
         cap=$(fm_backend_capture "$backend" "$target" 80 "$expected_label" 2>/dev/null) || cap=

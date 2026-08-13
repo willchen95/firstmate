@@ -141,8 +141,9 @@ re-send), while an idle pane keeps `pending` as a genuine swallow. A bare
 daemon's escalation buffer intact - this exception is a busy-queue treated as
 a delivered Enter, not a swallowed one. Above the adapters, the dispatch
 layer (`fm_backend_send_text_submit` in `bin/fm-backend.sh`) upgrades a
-still-inconclusive `pending`/`unknown` to the proof-carrying `queued-busy`
-when the pane is provably busy and its capture holds the typed text; the
+still-inconclusive `pending` to the proof-carrying `queued-busy` on herdr
+backends (where native agent-state busy detection is available) when the
+pane is provably busy and its capture holds the typed text; the
 daemon and `fm-send` accept `queued-busy` as delivery (the daemon logs
 `inject queued` and clears the buffer), which covers herdr's opencode
 busy-queue case without a separate adapter fix.

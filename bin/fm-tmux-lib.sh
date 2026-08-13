@@ -16,9 +16,11 @@
 # pending text after retries, while the separate turn-started conversion accepts
 # an unknown post-Enter composer only after this submit observed an idle baseline
 # become busy.
-# A verdict left inconclusive here (pending/unknown) may still be upgraded to
-# queued-busy by the backend-agnostic read-back owned by
-# fm_backend_send_text_submit in bin/fm-backend.sh.
+# The dispatch-layer read-back owned by fm_backend_send_text_submit in
+# bin/fm-backend.sh upgrades a pending verdict to queued-busy only on herdr
+# backends (where native agent-state busy detection is available); tmux has
+# no native busy state, so verdicts left inconclusive here pass through
+# unchanged.
 #
 # FM_COMPOSER_IDLE_RE is interpreted by the shared classifier with its structural
 # and styling safety gates.

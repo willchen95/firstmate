@@ -256,10 +256,13 @@ the Enter was accepted and queued (reported as `empty` so the caller does not
 re-send), while an idle pane keeps `pending` as a genuine swallow. The herdr
 adapter observes the same opencode behavior and still reports it as `pending`;
 the shared dispatch layer (`fm_backend_send_text_submit` in
-`bin/fm-backend.sh`) rescues that inconclusive verdict for every backend with
-a hoisted read-back - a provably busy pane whose capture holds the typed text
-upgrades to the proof-carrying `queued-busy`, which `fm-send` and the
-away-mode daemon accept as delivery.
+`bin/fm-backend.sh`) rescues that `pending` verdict on herdr backends (where
+native agent-state busy detection is available) with a hoisted read-back - a
+provably busy pane whose capture holds the typed text upgrades to the
+proof-carrying `queued-busy`, which `fm-send` and the away-mode daemon accept
+as delivery. An `unknown` verdict is never rescued, and backends without
+native busy state (tmux, zellij, orca, cmux) pass their verdicts through
+unchanged.
 Regression coverage: `tests/fm-tmux-submit-busy.test.sh` covers the four
 tmux-adapter scenarios (busy + pending -> `empty`, idle + pending ->
 `pending`, busy + cleared -> `empty`, idle + cleared -> `empty`), and

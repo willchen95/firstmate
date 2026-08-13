@@ -91,7 +91,7 @@ After the normal retry budget, only structurally proven pending text in a provab
 Ambiguous pending text never receives the busy-queue conversion.
 A second, baseline-gated conversion covers harnesses whose mid-turn screen the classifier cannot identify (Pi replaces its separated composer while working): when and only when the pane was idle before the text was typed, an idle-to-busy transition across the submit's own Enter confirms delivery, the same turn-started signal Herdr reads natively.
 Without that baseline, an `unknown` verdict is preserved untouched, so a busy-looking pane can never convert an unread composer into a confirmation.
-A verdict this adapter leaves inconclusive can still be upgraded to the proof-carrying `queued-busy` by the backend-agnostic read-back in `bin/fm-backend.sh`, which requires both a provably busy pane and the typed text visible in a bounded capture; [architecture](architecture.md) owns that dispatch-layer contract.
+The dispatch-layer read-back in `bin/fm-backend.sh` upgrades a `pending` verdict to the proof-carrying `queued-busy` only on herdr backends (where native agent-state busy detection is available) and only when the typed text is visible in a bounded capture; tmux has no native busy state, so verdicts this adapter leaves inconclusive pass through unchanged, and [architecture](architecture.md) owns that dispatch-layer contract.
 `tests/fm-tmux-submit-busy.test.sh` covers busy and idle panes with proven, ambiguous, and cleared composers.
 
 ## Limits and regression entry points
