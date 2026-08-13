@@ -1118,6 +1118,29 @@ SH
   chmod +x "$fakebin/jq"
 }
 
+test_oversized_canonical_snapshot_survives_projection() {
+  local home fakebin json i
+  home=$(make_home oversized-snapshot)
+  fakebin=$(make_fakebin "$home")
+  {
+    printf '## In flight\n\n## Queued\n\n## Done\n'
+    i=1
+    while [ "$i" -le 1200 ]; do
+      printf -- '- [x] bulk-%04d - Bulk landed task %04d with a padded description segment that inflates the snapshot past the kernel argv limit (repo: firstmate) (kind: ship) (done 2026-07-01)\n' "$i" "$i"
+      i=$((i + 1))
+    done
+  } > "$home/data/backlog.md"
+  [ "$(wc -c < "$home/data/backlog.md")" -gt 131072 ] \
+    || fail "fixture backlog must exceed the kernel per-argument limit"
+  json=$(run "$home" "$fakebin" --json --all-landed) \
+    || fail "bearings must survive a canonical snapshot larger than the kernel argv limit"
+  printf '%s' "$json" | jq -e '
+    .schema == "fm-bearings.v1"
+      and (.landed | length) == 1200
+  ' >/dev/null || fail "oversized-snapshot bearings projection was wrong: $json"
+  pass "bearings projects a canonical snapshot larger than the kernel argv limit"
+}
+
 test_projection_and_toon_fail_closed() {
   local home fakebin out err rc
   home=$(make_home fail-closed); write_fixture "$home"
@@ -1934,4 +1957,5 @@ test_perl_fallback_bounds_github_call
 test_section_caps_and_expansion_flags
 test_pr_repository_cap_and_expansion
 test_per_repository_pr_cap_is_disclosed
+test_oversized_canonical_snapshot_survives_projection
 test_projection_and_toon_fail_closed

@@ -4,7 +4,9 @@
 # A thin wrapper OVER the canonical bin/fm-fleet-snapshot.sh. It does not parse
 # fleet state itself: it shells out to `fm-fleet-snapshot.sh --json`, projects that
 # complete structured contract down to the small set of fields a "pick up where I
-# left off" read needs, and renders TOON at the output boundary. The internal data
+# left off" read needs, and renders TOON at the output boundary.
+# The canonical snapshot is staged in a process-local file so jq never receives
+# that payload as --argjson; a large home would otherwise fail with E2BIG. The internal data
 # model stays JSON (`--json` prints it verbatim); TOON is the default agent-facing
 # format per the AXI standard, and TOON/JSON are parity representations of the same
 # projected model. The projection is view-specific: it DROPS fields from the bearings
@@ -167,16 +169,42 @@ command -v jq >/dev/null 2>&1 || { echo "fm-bearings-snapshot: jq not found" >&2
 "$SCRIPT_DIR/fm-afk-return.sh" guard || exit $?
 
 NOW=${FM_BEARINGS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+bearings_tmpdir() {
+  local dir
+  if command -v mktemp >/dev/null 2>&1; then
+    mktemp -d "${TMPDIR:-/tmp}/fm-bearings-snapshot.XXXXXX"
+    return
+  fi
+  dir="${TMPDIR:-/tmp}/fm-bearings-snapshot.$$.$RANDOM"
+  (umask 077 && /bin/mkdir "$dir") || return 1
+  printf '%s\n' "$dir"
+}
+BEARINGS_TMP=$(bearings_tmpdir) \
+  || { echo "fm-bearings-snapshot: temporary workspace creation failed" >&2; exit 1; }
+SNAP_FILE="$BEARINGS_TMP/fleet.json"
+cleanup_bearings_tmp() {
+  case "$BEARINGS_TMP" in
+    "${TMPDIR:-/tmp}"/fm-bearings-snapshot.*)
+      if command -v rm >/dev/null 2>&1; then
+        rm -rf -- "$BEARINGS_TMP"
+      else
+        /bin/rm -rf -- "$BEARINGS_TMP"
+      fi
+      ;;
+  esac
+}
+trap cleanup_bearings_tmp EXIT
+
 if [ "$ALL_LANDED" = 1 ] || [ "$ALL_SECONDMATES" = 1 ]; then
   if [ "$ALL_LANDED" = 1 ]; then
-    SNAP=$(FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=0 "$FLEET" --json) || exit $?
+    FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=0 "$FLEET" --json > "$SNAP_FILE" || exit $?
   else
-    SNAP=$(FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 "$FLEET" --json) || exit $?
+    FM_SNAPSHOT_NOW="$NOW" FM_SNAPSHOT_SECONDMATES=0 "$FLEET" --json > "$SNAP_FILE" || exit $?
   fi
 else
-  SNAP=$(FM_SNAPSHOT_NOW="$NOW" "$FLEET" --json) || exit $?
+  FM_SNAPSHOT_NOW="$NOW" "$FLEET" --json > "$SNAP_FILE" || exit $?
 fi
-HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
+HOME_LABEL=$(jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))' "$SNAP_FILE") \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
 
 # --- optional live PR enrichment (the ONLY network path) --------------------
@@ -210,7 +238,7 @@ if [ "$INCLUDE_PRS" = 1 ]; then
       s=$(repo_slug "$u"); [ -n "$s" ] || continue
       case " $repos " in *" $s "*) : ;; *) repos="$repos $s" ;; esac
     done <<EOF
-$(printf '%s' "$SNAP" | jq -r '.tasks[].pr.url // empty')
+$(jq -r '.tasks[].pr.url // empty' "$SNAP_FILE")
 EOF
     while IFS= read -r wt; do
       [ -n "$wt" ] || continue
@@ -219,7 +247,7 @@ EOF
       s=$(repo_slug "$u"); [ -n "$s" ] || continue
       case " $repos " in *" $s "*) : ;; *) repos="$repos $s" ;; esac
     done <<EOF
-$(printf '%s' "$SNAP" | jq -r '.tasks[] | select(.kind != "secondmate") | .paths.worktree.path // empty')
+$(jq -r '.tasks[] | select(.kind != "secondmate") | .paths.worktree.path // empty' "$SNAP_FILE")
 EOF
 
     for repo in $repos; do PR_REPOS_TOTAL=$((PR_REPOS_TOTAL + 1)); done
@@ -271,7 +299,12 @@ EOF
 fi
 
 # --- projection: canonical snapshot -> fm-bearings.v1 model (JSON) ----------
-MODEL=$(printf '%s' "$SNAP" | jq \
+# The fleet snapshot can exceed the kernel per-argument limit. Read it from
+# the staged file so jq never receives the payload as --argjson or stdin-via-printf.
+CANDIDATE_PRS_FILE="$BEARINGS_TMP/candidate-prs.json"
+printf '%s' "$CANDIDATE_PRS" > "$CANDIDATE_PRS_FILE" \
+  || { echo "fm-bearings-snapshot: candidate PR staging failed" >&2; exit 1; }
+MODEL=$(jq \
   --arg home "$HOME_LABEL" \
   --arg now "$NOW" \
   --arg prs "$PR_STATUS" \
@@ -298,7 +331,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_repos_shown "$PR_REPOS_SHOWN" \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
-  --argjson candidate_prs "$CANDIDATE_PRS" '
+  --slurpfile candidate_prs_doc "$CANDIDATE_PRS_FILE" \
+  '$candidate_prs_doc[0] as $candidate_prs |
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
   def round_robin_landed($n):
@@ -471,7 +505,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $include_prs == 1 and $pr_repos_total > $pr_repos_shown then {surface:("PR repositories showing \($pr_repos_shown) of \($pr_repos_total)"), reveal:"--all-pr-repos"} else empty end),
         (if $include_prs == 1 and $pr_rows_capped > 0 then {surface:("candidate_prs showing \($candidate_prs | length) of at least \($pr_rows_min_total); capped in \($pr_rows_capped) repo(s)"), reveal:"raise FM_BEARINGS_PR_LIMIT"} else empty end),
         (if $include_prs == 1 then empty else {surface:"live PR discovery + checks", reveal:"--include-prs"} end) ]) }
-') || { echo "fm-bearings-snapshot: projection failed" >&2; exit 1; }
+' < "$SNAP_FILE") || { echo "fm-bearings-snapshot: projection failed" >&2; exit 1; }
 
 if [ "$FORMAT" = json ]; then
   printf '%s\n' "$MODEL"
