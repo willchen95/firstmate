@@ -2887,6 +2887,34 @@ test_projection_endpoint_match_requires_v2_bound_workspace() {
   pass "herdr presentation endpoint match: v2 custom-label fallback requires the journal's bound workspace"
 }
 
+test_projection_endpoint_match_v1_refuses_token_bound_elsewhere() {
+  local dir state log resp fb token journal
+  dir="$TMP_ROOT/endpoint-v1-stale"; state="$dir/state"
+  mkdir -p "$dir/responses" "$state"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  token=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_journal_create "$1" task-ep2' "$ROOT" "$state") \
+    || fail "could not create v1 endpoint fixture"
+  journal="$state/task-ep2.herdr-presentation"
+  # The v1 journal's token still labels a stale quarantined workspace (w2); a
+  # flat respawn's container endpoint (w1) must refuse correlation so teardown
+  # cannot retire the journal while the quarantined workspace survives.
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"firstmate/task-ep2 · p:%s"}]}}\n' "$token" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  if PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w1 "$1" task-ep2' "$ROOT" "$journal"; then
+    fail "a v1 journal whose token labels a different workspace must refuse endpoint correlation"
+  fi
+
+  # With no token-labeled workspace anywhere, endpoint presence remains the
+  # accepted v1 fallback.
+  : > "$log"; rm -f "$resp"/*.out "$resp"/*.exit "$resp/.count"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"}]}}\n' > "$resp/1.out"
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w1 "$1" task-ep2' "$ROOT" "$journal" \
+    || fail "a v1 journal with no token match anywhere should still accept endpoint presence"
+  pass "herdr presentation endpoint match: v1 token match on a different workspace refuses correlation"
+}
+
 # --- workspace_find: scoped to THIS home's own label, not just any match ----
 
 test_workspace_find_matches_only_this_homes_own_label() {
@@ -4479,6 +4507,7 @@ test_projection_reclaim_replaces_only_exact_husk_and_advances_binding
 test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk
 test_projection_recovery_custom_label_inspects_bound_workspace
 test_projection_endpoint_match_requires_v2_bound_workspace
+test_projection_endpoint_match_v1_refuses_token_bound_elsewhere
 test_workspace_find_matches_only_this_homes_own_label
 test_list_live_scoped_to_this_homes_workspace_only
 test_parse_target

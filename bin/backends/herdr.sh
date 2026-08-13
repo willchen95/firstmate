@@ -2514,6 +2514,7 @@ fm_backend_herdr_projection_endpoint_matches_journal() {  # <session> <workspace
   if [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ]; then
     [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$workspace_id" ] || return 1
   fi
+  [ -z "$matches" ] || return 1
   printf '%s' "$list" | jq -e --arg wid "$workspace_id" \
     '.result.workspaces[]? | select(.workspace_id == $wid) | length > 0' >/dev/null 2>&1
 }
