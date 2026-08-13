@@ -16,8 +16,9 @@
 # pending text after retries, while the separate turn-started conversion accepts
 # an unknown post-Enter composer only after this submit observed an idle baseline
 # become busy.
-# Herdr's OpenCode busy-queue limitation remains documented in
-# docs/herdr-backend.md.
+# A verdict left inconclusive here (pending/unknown) may still be upgraded to
+# queued-busy by the backend-agnostic read-back owned by
+# fm_backend_send_text_submit in bin/fm-backend.sh.
 #
 # FM_COMPOSER_IDLE_RE is interpreted by the shared classifier with its structural
 # and styling safety gates.

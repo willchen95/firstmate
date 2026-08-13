@@ -136,13 +136,16 @@ check alone false-positives on a swallowed Enter for every steer sent to a
 busy opencode pane. The shared `fm_tmux_submit_enter_core` falls back to
 `fm_pane_is_busy` once the Enter-retry budget is spent: a busy pane means the
 Enter was accepted and queued (reported as `empty` so the caller does not
-re-send), while an idle pane keeps `pending` as a genuine swallow. The
-strict-buffer-clears-only-on-`empty` policy above still holds for the daemon
-and the lenient-`pending`-fails-for-`fm-send` policy still holds for steer
-verification - this exception is a busy-queue is treated as a delivered
-Enter, not a swallowed one. The herdr adapter observes the same opencode
-behavior but needs a separate fix; the gap is recorded in
-`docs/herdr-backend.md` rather than papered over here.
+re-send), while an idle pane keeps `pending` as a genuine swallow. A bare
+`pending` still fails `fm-send` steer verification and still leaves the
+daemon's escalation buffer intact - this exception is a busy-queue treated as
+a delivered Enter, not a swallowed one. Above the adapters, the dispatch
+layer (`fm_backend_send_text_submit` in `bin/fm-backend.sh`) upgrades a
+still-inconclusive `pending`/`unknown` to the proof-carrying `queued-busy`
+when the pane is provably busy and its capture holds the typed text; the
+daemon and `fm-send` accept `queued-busy` as delivery (the daemon logs
+`inject queued` and clears the buffer), which covers herdr's opencode
+busy-queue case without a separate adapter fix.
 
 ## Classification policy
 
@@ -201,7 +204,8 @@ the operational prefix lets firstmate distinguish it from a real captain message
 - **Verified type-once submit model** - the digest is typed once (`send-keys -l`
   on tmux, `pane send-text` on herdr), then submitted with Enter and verified.
   Enter is retried, Enter only and never a retype, until the backend submit
-  primitive reports `empty` as its caller-facing success verdict.
+  primitive reports `empty` - or the dispatch layer's read-back-proven
+  `queued-busy` - as its caller-facing success verdict.
   For tmux that verdict normally means the shared classifier proved the composer cleared; a baseline-gated idle-to-busy transition may instead prove this Enter started the turn.
   For herdr's normal idle-baseline path it means native agent-state observed a real turn start; herdr uses the shared classifier for the pre-injection composer guard and fallback paths.
   This lets ghost-only or bordered-empty composers count as empty where a composer read is the active confirmation signal.

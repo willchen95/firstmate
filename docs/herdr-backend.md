@@ -311,7 +311,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 - Ghost and placeholder recognition uses ANSI de-emphasis when available; an unstyled glyph row carrying trailing non-idle text fails safely to `unknown`.
 - Mid-session secondmate liveness is not implemented.
 - OpenCode 1.18.4 can accept Enter while busy without clearing the composer.
-  The tmux backend has a busy-queue fallback, but Herdr still reports this case as submit pending and needs a separate adapter fix.
+  The Herdr adapter still reports this case as submit pending, but the shared dispatch layer in `bin/fm-backend.sh` upgrades it to a proof-carrying `queued-busy` verdict when the pane is provably busy and the capture holds the typed text; see [architecture](architecture.md).
 - Only tmux and Herdr can host the away-mode supervisor terminal.
 
 ## Regression entry points
