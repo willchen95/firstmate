@@ -1289,6 +1289,40 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
   pass "herdr presentation create: exact response IDs yield one normal task pane with no workspace-close authority"
 }
 
+test_projection_create_applies_custom_label() {
+  local dir state log resp fb out
+  dir="$TMP_ROOT/projection-custom-label"; state="$dir/state"; mkdir -p "$dir/responses" "$state"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"workspace":{"workspace_id":"w9"},"tab":{"tab_id":"w9:t1"},"root_pane":{"pane_id":"w9:p1"}}}\n' > "$resp/1.out"
+  printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-custom","workspace_id":"w9"}]}}\n' > "$resp/3.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/4.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/5.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/6.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-custom","workspace_id":"w9"}]}}\n' > "$resp/7.out"
+  printf '{"error":{"code":"pane_not_found"}}\n' > "$resp/9.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-custom","workspace_id":"w9"}]}}\n' > "$resp/10.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/11.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_projection_focus_snapshot() { printf "captain-ws\tcaptain-tab"; }
+      fm_backend_herdr_projection_focus_restore() { return 0; }
+      fm_backend_herdr_projection_create_task /tmp/proj "Door Panel · fix clearance" fm-task-custom || exit 1
+      printf "%s %s %s %s %s\n" \
+        "$FM_BACKEND_HERDR_PROJECTION_WORKSPACE_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_TAB_ID" \
+        "$FM_BACKEND_HERDR_PROJECTION_PANE_ID"
+    ' "$ROOT" "$state") || fail "projection create with custom label should succeed: $out"
+  [ "$out" = "w9 w9:t1 w9:p1 w9:t2 w9:p2" ] || fail "projection create did not retain exact response IDs: $out"
+  assert_contains "$(cat "$log")" $'workspace\x1fcreate\x1f--cwd\x1f/tmp/proj\x1f--label\x1fDoor Panel · fix clearance\x1f--no-focus' \
+    "projection workspace create did not use the custom --label"
+  pass "herdr presentation create: custom --label is passed through to workspace create"
+}
+
 test_projection_create_never_closes_a_concurrent_same_label_tab() {
   local dir log resp fb out status
   dir="$TMP_ROOT/projection-concurrent-tab"; mkdir -p "$dir/responses"
@@ -2779,6 +2813,106 @@ test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk() {
   assert_contains "$out" "has a live pane" "live duplicate refusal did not explain the risk"
   assert_not_contains "$(cat "$log")" $'pane\x1fclose' "live duplicate refusal closed a pane"
   pass "herdr presentation recovery: duplicate-token inspection is read-only and live-agent risk refuses fallback"
+}
+
+test_projection_recovery_custom_label_inspects_bound_workspace() {
+  local dir state home home_real log resp fb token journal out status
+  dir="$TMP_ROOT/projection-recovery-custom"; state="$dir/state"; home="$dir/home"
+  mkdir -p "$dir/responses" "$state" "$home"
+  home_real=$(cd "$home" && pwd -P)
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  token=$(bash -c '
+    . "$0/bin/backends/herdr.sh"
+    token=$(fm_backend_herdr_projection_journal_create "$1" task-cl1) || exit 1
+    fm_backend_herdr_projection_journal_bind \
+      "$1/task-cl1.herdr-presentation" task-cl1 "$2" fmtest \
+      w2 w2:t2 w2:p2 w1 firstmate "Door Panel · fix clearance" fm-task-cl1 || exit 1
+    printf "%s" "$token"
+  ' "$ROOT" "$state" "$home_real") || fail "could not create custom-label recovery fixture"
+  journal="$state/task-cl1.herdr-presentation"
+  # The custom-labeled workspace carries no " · p:<token>" suffix, so only the
+  # journal's bound workspace_id can surface it; a live agent there must still
+  # refuse a duplicate launch.
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"Door Panel · fix clearance"}]}}\n' > "$resp/1.out"
+  printf '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}\n' > "$resp/2.out"
+  printf '{"result":{"pane":{"pane_id":"w2:p2"}}}\n' > "$resp/3.out"
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/4.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_recovery_allows_flat fmtest "$1" task-cl1' "$ROOT" "$journal" 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "custom-labeled bound workspace with a live agent allowed a duplicate launch"
+  assert_contains "$out" "has a live pane" "custom-label live refusal did not explain the risk"
+  assert_not_contains "$(cat "$log")" $'pane\x1fclose' "custom-label live refusal closed a pane"
+
+  # The same bound workspace with no registered agent safely allows flat.
+  : > "$log"; rm -f "$resp"/*.out "$resp"/*.exit "$resp/.count"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"Door Panel · fix clearance"}]}}\n' > "$resp/1.out"
+  printf '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}\n' > "$resp/2.out"
+  printf '{"result":{"pane":{"pane_id":"w2:p2"}}}\n' > "$resp/3.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/4.out"
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_recovery_allows_flat fmtest "$1" task-cl1' "$ROOT" "$journal" \
+    >/dev/null 2>&1 || fail "agent-free custom-labeled bound workspace should allow flat fallback"
+  assert_not_contains "$(cat "$log")" $'workspace\x1fclose' "custom-label recovery inspection closed a workspace"
+  pass "herdr presentation recovery: a custom-labeled bound workspace is inspected via the journal's workspace_id"
+}
+
+test_projection_endpoint_match_requires_v2_bound_workspace() {
+  local dir state home home_real log resp fb journal
+  dir="$TMP_ROOT/endpoint-custom"; state="$dir/state"; home="$dir/home"
+  mkdir -p "$dir/responses" "$state" "$home"
+  home_real=$(cd "$home" && pwd -P)
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_projection_journal_create "$1" task-ep1 >/dev/null || exit 1
+    fm_backend_herdr_projection_journal_bind \
+      "$1/task-ep1.herdr-presentation" task-ep1 "$2" fmtest \
+      w2 w2:t2 w2:p2 w1 firstmate "Door Panel · fix clearance" fm-task-ep1
+  ' "$ROOT" "$state" "$home_real" || fail "could not create custom-label endpoint fixture"
+  journal="$state/task-ep1.herdr-presentation"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"Door Panel · fix clearance"},{"workspace_id":"w3","label":"other"}]}}\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w2 "$1" task-ep1' "$ROOT" "$journal" \
+    || fail "custom-labeled endpoint matching its v2 bound workspace should correlate"
+
+  : > "$log"; rm -f "$resp"/*.out "$resp"/*.exit "$resp/.count"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"Door Panel · fix clearance"},{"workspace_id":"w3","label":"other"}]}}\n' > "$resp/1.out"
+  if PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w3 "$1" task-ep1' "$ROOT" "$journal"; then
+    fail "an endpoint workspace differing from the v2 journal binding must stay quarantined"
+  fi
+  pass "herdr presentation endpoint match: v2 custom-label fallback requires the journal's bound workspace"
+}
+
+test_projection_endpoint_match_v1_refuses_token_bound_elsewhere() {
+  local dir state log resp fb token journal
+  dir="$TMP_ROOT/endpoint-v1-stale"; state="$dir/state"
+  mkdir -p "$dir/responses" "$state"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  token=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_journal_create "$1" task-ep2' "$ROOT" "$state") \
+    || fail "could not create v1 endpoint fixture"
+  journal="$state/task-ep2.herdr-presentation"
+  # The v1 journal's token still labels a stale quarantined workspace (w2); a
+  # flat respawn's container endpoint (w1) must refuse correlation so teardown
+  # cannot retire the journal while the quarantined workspace survives.
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w2","label":"firstmate/task-ep2 · p:%s"}]}}\n' "$token" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  if PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w1 "$1" task-ep2' "$ROOT" "$journal"; then
+    fail "a v1 journal whose token labels a different workspace must refuse endpoint correlation"
+  fi
+
+  # With no token-labeled workspace anywhere, endpoint presence remains the
+  # accepted v1 fallback.
+  : > "$log"; rm -f "$resp"/*.out "$resp"/*.exit "$resp/.count"
+  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"}]}}\n' > "$resp/1.out"
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_endpoint_matches_journal fmtest w1 "$1" task-ep2' "$ROOT" "$journal" \
+    || fail "a v1 journal with no token match anywhere should still accept endpoint presence"
+  pass "herdr presentation endpoint match: v1 token match on a different workspace refuses correlation"
 }
 
 # --- workspace_find: scoped to THIS home's own label, not just any match ----
@@ -4327,6 +4461,7 @@ test_presentation_preference_reports_three_distinct_states
 test_projection_journal_is_atomic_and_uses_128_bit_token
 test_projection_journal_v2_binds_and_advances_exact_endpoint
 test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane
+test_projection_create_applies_custom_label
 test_projection_create_never_closes_a_concurrent_same_label_tab
 test_projection_focus_snapshot_requires_exact_workspace_and_tab
 test_projection_close_restores_exact_prior_focus
@@ -4370,6 +4505,9 @@ test_projection_order_rejects_malformed_socket
 test_projection_reclaim_refusal_matrix_is_non_mutating
 test_projection_reclaim_replaces_only_exact_husk_and_advances_binding
 test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk
+test_projection_recovery_custom_label_inspects_bound_workspace
+test_projection_endpoint_match_requires_v2_bound_workspace
+test_projection_endpoint_match_v1_refuses_token_bound_elsewhere
 test_workspace_find_matches_only_this_homes_own_label
 test_list_live_scoped_to_this_homes_workspace_only
 test_parse_target

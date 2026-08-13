@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <label>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <label>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -58,6 +58,21 @@
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
+#   --label "<Thing> · <plain job>" names this single task's captain-visible
+#   workspace with a plain human title (2-4 plain words, no task ids, slugs, or
+#   tokens). The label is firstmate's judgment and is never invented here: a
+#   herdr spawn without --label prints a one-line warning naming that law and
+#   continues. Any backend records a passed label as label= in state/<id>.meta,
+#   but only a herdr projected create renames anything: the disposable
+#   workspace is created with the custom title in place of the canonical
+#   token-bearing projection title, and the presentation journal records it as
+#   that workspace's expected label. On the flat herdr layout and on every
+#   other backend the label is meta-only. --label is single-task only (refused
+#   on batch pairs) and refused alongside --relaunch, which reuses the recorded
+#   label. It is also refused when empty, containing a newline or carriage
+#   return, colliding with a home workspace label (firstmate, 2ndmate-*),
+#   starting with the '└' projection-child prefix, or ending with the reserved
+#   ' · p:<token>' suffix.
 #   A herdr crewmate or scout is placed in the exact workspace of the firstmate
 #   or secondmate process launching it, resolved from that process's own herdr
 #   pane rather than from a workspace label (herdr enforces no label uniqueness,
@@ -263,6 +278,7 @@ EFFORT=
 BACKEND_ARG=
 MODE=
 YOLO=
+LABEL=
 TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
@@ -270,6 +286,7 @@ EFFORT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
+LABEL_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
@@ -286,6 +303,7 @@ for a in "$@"; do
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
+      label) LABEL=$a; LABEL_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
@@ -308,6 +326,8 @@ for a in "$@"; do
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
+    --label) want_value=label ;;
+    --label=*) LABEL=${a#--label=}; LABEL_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
     *) POS+=("$a") ;;
@@ -320,6 +340,20 @@ done
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
+[ "$LABEL_SET" -eq 0 ] || [ -n "$LABEL" ] || { echo "error: --label requires a non-empty value" >&2; exit 1; }
+case "$LABEL" in
+  *$'\n'*|*$'\r'*) echo "error: --label contains newline or carriage return characters" >&2; exit 1 ;;
+esac
+# ponytail: reject labels that collide with operational label grammar.
+case "$LABEL" in
+  firstmate|2ndmate-*) echo "error: --label '$LABEL' collides with the home workspace label; choose a task-specific name" >&2; exit 1 ;;
+  '└'*) echo "error: --label '$LABEL' starts with a '└' prefix that conflicts with the projection-child label pattern; choose a plain name" >&2; exit 1 ;;
+esac
+LABEL_TOKEN_SUFFIX_RE=' · p:[A-Za-z0-9_-]{22}$'
+if [[ "$LABEL" =~ $LABEL_TOKEN_SUFFIX_RE ]]; then
+  echo "error: --label '$LABEL' ends with a ' · p:<token>' suffix reserved for the projection token grammar; choose a plain name" >&2
+  exit 1
+fi
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
@@ -348,6 +382,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
+  [ "$LABEL_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded label; --label cannot override it" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -844,6 +879,10 @@ fi
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac; then
   if [ "$KIND" != secondmate ] && [ -z "$HARNESS_ARG" ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
+    exit 1
+  fi
+  if [ -n "$LABEL" ]; then
+    echo "error: --label is single-task only; label each task individually" >&2
     exit 1
   fi
   rc=0
@@ -1930,7 +1969,11 @@ case "$BACKEND" in
             spawn_herdr_presentation_order_lock_release
           else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
-            HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
+            if [ "$LABEL_SET" -eq 1 ] && [ -n "$LABEL" ]; then
+              HERDR_PROJECTION_LABEL=$LABEL
+            else
+              HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
+            fi
             if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
               "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W"; then
               if [ "${FM_BACKEND_HERDR_PROJECTION_CLEANUP_SAFE:-0}" = 1 ]; then
@@ -1954,6 +1997,8 @@ case "$BACKEND" in
             fm_backend_herdr_projection_order_best_effort \
               "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PARENT_WORKSPACE_ID"
             HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
+            # ponytail: the journal records whatever workspace_label was used
+            # (canonical or custom --label). Presentation-only, never authority.
             if [ -n "$HERDR_HOME_ID" ] \
                && fm_backend_herdr_projection_live_binding_matches \
                  "$HERDR_SES" "$HERDR_PROJECTION_ID" "$HERDR_WORKSPACE_ID" \
@@ -1995,6 +2040,10 @@ EOF
       exit 1
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
+    # ponytail: projected layout uses --label at workspace creation time (above
+    # the HERDR_PROJECTED block), flat layout records label= in meta only.
+    # The warning fires for every herdr spawn without an explicit label.
+    [ "$LABEL_SET" -eq 1 ] || echo "warning: herdr spawn without --label; captain-visible labels should be in '<Thing> · <plain job>' format (2-4 plain words, no task ids or tokens)" >&2
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1
@@ -2585,6 +2634,7 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  [ -z "$LABEL" ] || echo "label=$LABEL"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.

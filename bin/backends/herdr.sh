@@ -548,10 +548,13 @@ fm_backend_herdr_projection_journal_snapshot() {  # <journal> <task-id>
   [ -n "$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL" ] \
     && [ -n "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL" ] \
     && [ -n "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" ] || return 1
-  expected_label=$(fm_backend_herdr_projection_workspace_label "$id" "$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID")
+  # The workspace_label is presentation-only, never authority (the
+  # workspace_id/tab_id/pane_id are the exact bindings). Accept any
+  # workspace_label — a custom --label is deliberately different from the
+  # canonical projection pattern. The task_label check (fm-<id>) is the
+  # reliable invariant.
   expected_task_label="fm-$id"
-  [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL" = "$expected_label" ] \
-    && [ "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" = "$expected_task_label" ]
+  [ "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" = "$expected_task_label" ]
 }
 
 # fm_backend_herdr_projection_journal_token: validate and read either journal
@@ -2423,12 +2426,15 @@ fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
 # Missing matches safely degrade to the normal flat workspace.
 # One or more matches allow flat fallback only when every pane is positively
 # dead or agent-free; a live or unknown pane refuses a duplicate launch.
+# A custom --label workspace never carries the " · p:<token>" suffix, so a
+# version 2 journal's bound workspace_id joins the inspection set directly.
 fm_backend_herdr_projection_recovery_allows_flat() {  # <session> <journal> <task-id>
-  local session=$1 journal=$2 id=$3 token list wsids count wsid panes pane_ids pane state
-  token=$(fm_backend_herdr_projection_journal_token "$journal" "$id") || {
+  local session=$1 journal=$2 id=$3 token list wsids bound_wsid count wsid panes pane_ids pane state
+  fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || {
     echo "error: malformed herdr presentation journal for $id; refusing duplicate launch" >&2
     return 1
   }
+  token=$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID
   fm_backend_herdr_server_ensure "$session" || {
     echo "error: could not inspect the quarantined herdr presentation for $id; refusing duplicate launch" >&2
     return 1
@@ -2443,6 +2449,11 @@ fm_backend_herdr_projection_recovery_allows_flat() {  # <session> <journal> <tas
   fi
   wsids=$(printf '%s' "$list" | jq -r --arg suffix " · p:$token" \
     '.result.workspaces[]? | select((.label | type) == "string" and (.label | endswith($suffix))) | .workspace_id' 2>/dev/null)
+  if [ -n "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" ]; then
+    bound_wsid=$(printf '%s' "$list" | jq -r --arg wid "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" \
+      '.result.workspaces[]? | select((.workspace_id | type) == "string" and .workspace_id == $wid) | .workspace_id' 2>/dev/null)
+    wsids=$(printf '%s\n%s\n' "$wsids" "$bound_wsid" | awk 'NF && !seen[$0]++')
+  fi
   count=$(printf '%s\n' "$wsids" | awk 'NF { n += 1 } END { print n + 0 }')
   if [ "$count" -eq 0 ]; then
     echo "warning: no exact herdr presentation token match for $id; leaving any stale space untouched and spawning flat" >&2
@@ -2489,12 +2500,23 @@ EOF
 # This verdict never authorizes a Herdr mutation.
 fm_backend_herdr_projection_endpoint_matches_journal() {  # <session> <workspace-id> <journal> <task-id>
   local session=$1 workspace_id=$2 journal=$3 id=$4 token list matches
-  token=$(fm_backend_herdr_projection_journal_token "$journal" "$id") || return 1
+  fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || return 1
+  token=$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
   printf '%s' "$list" | jq -e '(.result.workspaces | type) == "array"' >/dev/null 2>&1 || return 1
+  # Token-suffix match: exact label ending matches the canonical projection pattern.
   matches=$(printf '%s' "$list" | jq -r --arg suffix " · p:$token" \
     '.result.workspaces[]? | select((.label | type) == "string" and (.label | endswith($suffix))) | .workspace_id' 2>/dev/null)
-  [ "$matches" = "$workspace_id" ]
+  [ "$matches" = "$workspace_id" ] && return 0
+  # Custom label fallback: the workspace_label is presentation-only, not
+  # authority. A version 2 journal must bind this exact workspace_id; a
+  # version 1 journal records no binding, so presence is the only check left.
+  if [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ]; then
+    [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$workspace_id" ] || return 1
+  fi
+  [ -z "$matches" ] || return 1
+  printf '%s' "$list" | jq -e --arg wid "$workspace_id" \
+    '.result.workspaces[]? | select(.workspace_id == $wid) | length > 0' >/dev/null 2>&1
 }
 
 # fm_backend_herdr_parse_target: split "<session>:<pane_id>" (pane_id itself
