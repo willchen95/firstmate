@@ -58,6 +58,21 @@
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
+#   --label "<Thing> · <plain job>" names this single task's captain-visible
+#   workspace with a plain human title (2-4 plain words, no task ids, slugs, or
+#   tokens). The label is firstmate's judgment and is never invented here: a
+#   herdr spawn without --label prints a one-line warning naming that law and
+#   continues. Any backend records a passed label as label= in state/<id>.meta,
+#   but only a herdr projected create renames anything: the disposable
+#   workspace is created with the custom title in place of the canonical
+#   token-bearing projection title, and the presentation journal records it as
+#   that workspace's expected label. On the flat herdr layout and on every
+#   other backend the label is meta-only. --label is single-task only (refused
+#   on batch pairs) and refused alongside --relaunch, which reuses the recorded
+#   label. It is also refused when empty, containing a newline or carriage
+#   return, colliding with a home workspace label (firstmate, 2ndmate-*),
+#   starting with the '└' projection-child prefix, or ending with the reserved
+#   ' · p:<token>' suffix.
 #   A herdr crewmate or scout is placed in the exact workspace of the firstmate
 #   or secondmate process launching it, resolved from that process's own herdr
 #   pane rather than from a workspace label (herdr enforces no label uniqueness,
