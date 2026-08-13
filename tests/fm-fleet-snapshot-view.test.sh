@@ -62,6 +62,19 @@ make_home() {  # <name>
   printf '%s\n' "$home"
 }
 
+assert_snapshot_failure() {  # <rc> <stdout> <stderr> <tmpdir> <diagnostic> <label>
+  local rc=$1 stdout_file=$2 stderr_file=$3 task_tmp=$4 diagnostic=$5 label=$6 actual
+  [ "$rc" -ne 0 ] || fail "$label returned success"
+  [ ! -s "$stdout_file" ] || fail "$label emitted partial JSON"
+  actual=$(cat "$stderr_file")
+  [ "$actual" = "$diagnostic" ] \
+    || fail "$label diagnostic mismatch: $actual"
+  if find "$task_tmp" -mindepth 1 -maxdepth 1 -name 'fm-fleet-snapshot.*' -print -quit | grep -q .; then
+    fail "$label leaked its temporary workspace"
+  fi
+  return 0
+}
+
 record_claude_idle() {  # <state-dir> <id>
   local state=$1 id=$2 gen
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" "$id")
@@ -779,8 +792,233 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+# Regression: backlog/tasks JSON used to be passed to jq via --argjson, which
+# put the whole payload in a single execve argument and failed with
+# "Argument list too long" once a home's backlog crossed the kernel's
+# per-argument limit. The snapshot must survive such homes.
+test_backlog_larger_than_kernel_argv_limit() {
+  local home out i
+  home=$(make_home large-backlog)
+  {
+    printf '## In flight\n\n## Queued\n\n## Done\n'
+    i=1
+    while [ "$i" -le 1200 ]; do
+      printf -- '- [x] bulk-%04d - Bulk landed task %04d with a padded description segment that inflates the backlog past the kernel argv limit (repo: alpha) (kind: ship) (done 2026-07-01)\n' "$i" "$i"
+      i=$((i + 1))
+    done
+  } > "$home/data/backlog.md"
+  [ "$(wc -c < "$home/data/backlog.md")" -gt 131072 ] \
+    || fail "fixture backlog must exceed the kernel per-argument limit"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json) \
+    || fail "snapshot must survive a backlog larger than the kernel argv limit"
+  printf '%s' "$out" | jq -e '
+    .schema == "fm-fleet-snapshot.v1"
+      and .backlog.present == true
+      and ([.backlog.records[] | select(.state == "done")] | length) == 1200
+      and .main_inventory.valid == true
+  ' >/dev/null || fail "oversized-backlog snapshot output wrong"
+  pass "snapshot survives a backlog larger than the kernel argv limit"
+}
+
+test_scout_report_framing_and_identity_fail_closed() {
+  local case_name home fakebin task_tmp real_find real_jq report_path rc mutant bash_env
+  real_find=$(command -v find)
+  real_jq=$(command -v jq)
+
+  for case_name in find-failure truncated newline duplicate-path; do
+    home=$(make_home "scout-framing-$case_name")
+    fakebin=$(make_fakebin "$home")
+    task_tmp="$home/tmp"
+    report_path="$home/data/scout-a/report.md"
+    mkdir -p "$task_tmp" "$(dirname "$report_path")"
+    printf '# report\n' > "$report_path"
+    cat > "$fakebin/find" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = -print0 ]; then
+    case "$REPORT_LIST_MUTANT" in
+      find-failure) exit 73 ;;
+      truncated) printf '%s' "$REPORT_PATH" ;;
+      newline) printf '%s\n' "$REPORT_PATH" ;;
+      duplicate-path) printf '%s\0%s\0' "$REPORT_PATH" "$REPORT_PATH" ;;
+    esac
+    exit 0
+  fi
+done
+exec "$REAL_FIND" "$@"
+SH
+    chmod +x "$fakebin/find"
+    set +e
+    PATH="$fakebin:$PATH" REAL_FIND="$real_find" REPORT_LIST_MUTANT="$case_name" \
+      REPORT_PATH="$report_path" TMPDIR="$task_tmp" FM_HOME="$home" \
+      FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z "$SNAPSHOT" --json \
+      > "$home/failed.out" 2> "$home/failed.err"
+    rc=$?
+    set -e
+    assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+      "fm-fleet-snapshot: scout report read failed" "$case_name report-list mutant"
+  done
+
+  home=$(make_home scout-framing-missing-sentinel)
+  task_tmp="$home/tmp"
+  mkdir -p "$task_tmp" "$home/data/scout-a"
+  printf '# report\n' > "$home/data/scout-a/report.md"
+  cp -R "$ROOT/bin" "$home/bin"
+  mutant="$home/bin/fm-fleet-snapshot-missing-sentinel.sh"
+  grep -vF "  printf '\\0' >> \"\$report_list\" || return 1" "$SNAPSHOT" > "$mutant"
+  cmp -s "$SNAPSHOT" "$mutant" && fail "missing-sentinel mutant did not change the source"
+  chmod +x "$mutant"
+  set +e
+  TMPDIR="$task_tmp" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z \
+    "$mutant" --json > "$home/failed.out" 2> "$home/failed.err"
+  rc=$?
+  set -e
+  assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+    "fm-fleet-snapshot: scout report read failed" "missing terminal sentinel mutant"
+
+  home=$(make_home scout-framing-read-status)
+  task_tmp="$home/tmp"
+  bash_env="$home/bash-env"
+  mkdir -p "$task_tmp" "$home/data/scout-a"
+  printf '# report\n' > "$home/data/scout-a/report.md"
+  cat > "$bash_env" <<'SH'
+read() {
+  local arg
+  for arg in "$@"; do
+    [ "$arg" = -d ] && return 73
+  done
+  builtin read "$@"
+}
+SH
+  set +e
+  BASH_ENV="$bash_env" TMPDIR="$task_tmp" FM_HOME="$home" \
+    FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z "$SNAPSHOT" --json \
+    > "$home/failed.out" 2> "$home/failed.err"
+  rc=$?
+  set -e
+  assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+    "fm-fleet-snapshot: scout report read failed" "abnormal report-list read"
+
+  home=$(make_home scout-duplicate-id)
+  fakebin=$(make_fakebin "$home")
+  task_tmp="$home/tmp"
+  mkdir -p "$task_tmp" "$home/data/scout-a" "$home/data/scout-b"
+  printf '# report a\n' > "$home/data/scout-a/report.md"
+  printf '# report b\n' > "$home/data/scout-b/report.md"
+  cat > "$fakebin/jq" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = '{id:$id,path:$path}' ]; then
+    record=$("$REAL_JQ" "$@") || exit $?
+    printf '%s' "$record" | "$REAL_JQ" '.id = "duplicate-id"'
+    exit $?
+  fi
+done
+exec "$REAL_JQ" "$@"
+SH
+  chmod +x "$fakebin/jq"
+  set +e
+  PATH="$fakebin:$PATH" REAL_JQ="$real_jq" TMPDIR="$task_tmp" FM_HOME="$home" \
+    FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z "$SNAPSHOT" --json \
+    > "$home/failed.out" 2> "$home/failed.err"
+  rc=$?
+  set -e
+  assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+    "fm-fleet-snapshot: scout report read failed" "duplicate report ID mutant"
+  pass "report-list framing, abnormal reads, duplicate paths, and duplicate IDs fail closed"
+}
+
+test_scout_report_nonregular_paths_fail_closed() {
+  local case_name home fakebin task_tmp real_find report_path target rc
+  real_find=$(command -v find)
+  for case_name in symlink directory; do
+    home=$(make_home "scout-nonregular-$case_name")
+    fakebin=$(make_fakebin "$home")
+    task_tmp="$home/tmp"
+    report_path="$home/data/scout-a/report.md"
+    mkdir -p "$task_tmp" "$home/data/scout-a"
+    if [ "$case_name" = symlink ]; then
+      target="$home/data/real-report"
+      printf '# report\n' > "$target"
+      ln -s "$target" "$report_path"
+    else
+      mkdir "$report_path"
+    fi
+    cat > "$fakebin/find" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = -print0 ]; then
+    printf '%s\0' "$REPORT_PATH"
+    exit 0
+  fi
+done
+exec "$REAL_FIND" "$@"
+SH
+    chmod +x "$fakebin/find"
+    set +e
+    PATH="$fakebin:$PATH" REAL_FIND="$real_find" REPORT_PATH="$report_path" \
+      TMPDIR="$task_tmp" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z \
+      "$SNAPSHOT" --json > "$home/failed.out" 2> "$home/failed.err"
+    rc=$?
+    set -e
+    assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+      "fm-fleet-snapshot: scout report read failed" "$case_name report path mutant"
+  done
+  pass "symlink and nonregular report records are rejected"
+}
+
+test_staged_output_requires_cleanup_and_publication_success() {
+  local home fakebin task_tmp real_rm rc
+  home=$(make_home cleanup-failure)
+  fakebin=$(make_fakebin "$home")
+  task_tmp="$home/tmp"
+  real_rm=$(command -v rm)
+  mkdir -p "$task_tmp"
+  cat > "$fakebin/rm" <<'SH'
+#!/usr/bin/env bash
+if [ ! -e "$RM_FAILURE_MARKER" ]; then
+  : > "$RM_FAILURE_MARKER"
+  exit 73
+fi
+exec "$REAL_RM" "$@"
+SH
+  chmod +x "$fakebin/rm"
+  set +e
+  PATH="$fakebin:$PATH" REAL_RM="$real_rm" RM_FAILURE_MARKER="$home/rm-failed-once" \
+    TMPDIR="$task_tmp" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z \
+    "$SNAPSHOT" --json > "$home/failed.out" 2> "$home/failed.err"
+  rc=$?
+  set -e
+  [ -e "$home/rm-failed-once" ] || fail "cleanup failure mutant was not exercised"
+  assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+    "fm-fleet-snapshot: final snapshot publication failed" "cleanup failure"
+
+  home=$(make_home post-stage-failure)
+  fakebin=$(make_fakebin "$home")
+  task_tmp="$home/tmp"
+  mkdir -p "$task_tmp"
+  cat > "$fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+exit 74
+SH
+  chmod +x "$fakebin/cat"
+  set +e
+  PATH="$fakebin:$PATH" TMPDIR="$task_tmp" FM_HOME="$home" \
+    FM_SNAPSHOT_NOW=2026-07-29T00:00:00Z "$SNAPSHOT" --secondmate-home-summary \
+    > "$home/failed.out" 2> "$home/failed.err"
+  rc=$?
+  set -e
+  assert_snapshot_failure "$rc" "$home/failed.out" "$home/failed.err" "$task_tmp" \
+    "fm-fleet-snapshot: final snapshot publication failed" "post-stage publication failure"
+  pass "cleanup and post-stage failures publish no JSON and leave no workspace"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_backlog_larger_than_kernel_argv_limit
+test_scout_report_framing_and_identity_fail_closed
+test_scout_report_nonregular_paths_fail_closed
+test_staged_output_requires_cleanup_and_publication_success
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state
