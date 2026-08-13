@@ -329,6 +329,11 @@ done
 case "$LABEL" in
   *$'\n'*|*$'\r'*) echo "error: --label contains newline or carriage return characters" >&2; exit 1 ;;
 esac
+# ponytail: reject labels that collide with operational label grammar.
+case "$LABEL" in
+  firstmate|2ndmate-*) echo "error: --label '$LABEL' collides with the home workspace label; choose a task-specific name" >&2; exit 1 ;;
+  '└'*) echo "error: --label '$LABEL' starts with a '└' prefix that conflicts with the projection-child label pattern; choose a plain name" >&2; exit 1 ;;
+esac
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
@@ -1967,21 +1972,21 @@ case "$BACKEND" in
             HERDR_PROJECTION_ABORT_SEEDED_PANE=$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID
             fm_backend_herdr_projection_order_best_effort \
               "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PARENT_WORKSPACE_ID"
-            if [ "$LABEL_SET" -eq 0 ] || [ -z "$LABEL" ]; then
-              HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
-              if [ -n "$HERDR_HOME_ID" ] \
-                 && fm_backend_herdr_projection_live_binding_matches \
-                   "$HERDR_SES" "$HERDR_PROJECTION_ID" "$HERDR_WORKSPACE_ID" \
-                   "$HERDR_TAB_ID" "$HERDR_PANE_ID" "$HERDR_PARENT_WORKSPACE_ID" \
-                   "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W" \
-                 && fm_backend_herdr_projection_journal_bind \
-                   "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_HOME_ID" "$HERDR_SES" \
-                   "$HERDR_WORKSPACE_ID" "$HERDR_TAB_ID" "$HERDR_PANE_ID" \
-                   "$HERDR_PARENT_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W"; then
-                :
-              else
-                echo "warning: herdr presentation could not publish an exact restart binding; this task will use flat fallback after a restart" >&2
-              fi
+            HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
+            # ponytail: the journal records whatever workspace_label was used
+            # (canonical or custom --label). Presentation-only, never authority.
+            if [ -n "$HERDR_HOME_ID" ] \
+               && fm_backend_herdr_projection_live_binding_matches \
+                 "$HERDR_SES" "$HERDR_PROJECTION_ID" "$HERDR_WORKSPACE_ID" \
+                 "$HERDR_TAB_ID" "$HERDR_PANE_ID" "$HERDR_PARENT_WORKSPACE_ID" \
+                 "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W" \
+               && fm_backend_herdr_projection_journal_bind \
+                 "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_HOME_ID" "$HERDR_SES" \
+                 "$HERDR_WORKSPACE_ID" "$HERDR_TAB_ID" "$HERDR_PANE_ID" \
+                 "$HERDR_PARENT_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W"; then
+              :
+            else
+              echo "warning: herdr presentation could not publish an exact restart binding; this task will use flat fallback after a restart" >&2
             fi
           fi
         else
@@ -2014,7 +2019,7 @@ EOF
     # ponytail: projected layout uses --label at workspace creation time (above
     # the HERDR_PROJECTED block), flat layout records label= in meta only.
     # The warning fires for every herdr spawn without an explicit label.
-    [ "$LABEL_SET" -eq 1 ] || echo "warning: herdr spawn without --label; the visible-names contract (AGENTS.md section 1) requires captain-visible labels in '<Thing> · <plain job>' format" >&2
+    [ "$LABEL_SET" -eq 1 ] || echo "warning: herdr spawn without --label; captain-visible labels should be in '<Thing> · <plain job>' format (2-4 plain words, no task ids or tokens)" >&2
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1

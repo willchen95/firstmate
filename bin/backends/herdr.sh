@@ -548,10 +548,13 @@ fm_backend_herdr_projection_journal_snapshot() {  # <journal> <task-id>
   [ -n "$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL" ] \
     && [ -n "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL" ] \
     && [ -n "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" ] || return 1
-  expected_label=$(fm_backend_herdr_projection_workspace_label "$id" "$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID")
+  # The workspace_label is presentation-only, never authority (the
+  # workspace_id/tab_id/pane_id are the exact bindings). Accept any
+  # workspace_label — a custom --label is deliberately different from the
+  # canonical projection pattern. The task_label check (fm-<id>) is the
+  # reliable invariant.
   expected_task_label="fm-$id"
-  [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL" = "$expected_label" ] \
-    && [ "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" = "$expected_task_label" ]
+  [ "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" = "$expected_task_label" ]
 }
 
 # fm_backend_herdr_projection_journal_token: validate and read either journal
@@ -2492,9 +2495,14 @@ fm_backend_herdr_projection_endpoint_matches_journal() {  # <session> <workspace
   token=$(fm_backend_herdr_projection_journal_token "$journal" "$id") || return 1
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
   printf '%s' "$list" | jq -e '(.result.workspaces | type) == "array"' >/dev/null 2>&1 || return 1
+  # Token-suffix match: exact label ending matches the canonical projection pattern.
   matches=$(printf '%s' "$list" | jq -r --arg suffix " · p:$token" \
     '.result.workspaces[]? | select((.label | type) == "string" and (.label | endswith($suffix))) | .workspace_id' 2>/dev/null)
-  [ "$matches" = "$workspace_id" ]
+  [ "$matches" = "$workspace_id" ] && return 0
+  # Custom label fallback: match by workspace_id directly. The workspace_label
+  # is presentation-only, not authority.
+  printf '%s' "$list" | jq -e --arg wid "$workspace_id" \
+    '.result.workspaces[]? | select(.workspace_id == $wid) | length > 0' >/dev/null 2>&1
 }
 
 # fm_backend_herdr_parse_target: split "<session>:<pane_id>" (pane_id itself
