@@ -97,7 +97,7 @@ The dispatch-layer read-back in `bin/fm-backend.sh` upgrades a `pending` verdict
 ## Limits and regression entry points
 
 - tmux is the reference path and supports secondmate homes.
-- The OpenCode busy-queue exception is tmux-specific; Herdr retains its separately documented gap.
+- The OpenCode busy-queue exception above is the tmux adapter's own; Herdr's equivalent case is rescued by the dispatch-layer `queued-busy` read-back owned by [architecture](architecture.md).
 
 ```sh
 tests/fm-backend-tmux-smoke.test.sh
