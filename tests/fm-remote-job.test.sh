@@ -285,6 +285,39 @@ wait "$OTHER_PID" 2>/dev/null || true
 OTHER_PID=
 pass "stale ownership is reclaimed without signaling a reused pid"
 
+# A worker hard-killed partway through shutdown (the supervisor's redundant
+# TERM lands after worker_shutdown resets its traps) can strand a private
+# temp file inside the lock dir, e.g. a .quarantine.* left between mktemp and
+# mv. Reclamation must still clear the whole stale lock: before the fix every
+# replacement worker failed the lock rmdir, its supervisor restarted it into
+# the same wall, and ensure reported "remote job worker did not report ready
+# after startup".
+fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" \
+  || fail "the stray-lock fixture could not stop the live worker tree"
+sleep 20 &
+STRAY_DEAD_PID=$!
+STRAY_DEAD_START=$(fm_remote_job_process_start "$STRAY_DEAD_PID") \
+  || fail "the stray-lock fixture could not record a process start"
+STRAY_DEAD_COMMAND=$(fm_remote_job_process_command "$STRAY_DEAD_PID") \
+  || fail "the stray-lock fixture could not record a process command"
+kill -KILL "$STRAY_DEAD_PID"
+wait "$STRAY_DEAD_PID" 2>/dev/null || true
+mkdir -p "$STATE_ROOT/worker.lock"
+printf '%s\n' "$STRAY_DEAD_PID" > "$STATE_ROOT/worker.lock/pid"
+printf '%s\n' "$STRAY_DEAD_START" > "$STATE_ROOT/worker.lock/start"
+printf '%s\n' "$STRAY_DEAD_COMMAND" > "$STATE_ROOT/worker.lock/command"
+printf 'partial quarantine\n' > "$STATE_ROOT/worker.lock/.quarantine.stray1"
+printf '%s\n' "$STRAY_DEAD_PID" > "$STATE_ROOT/worker.pid"
+printf 'stale\n' > "$STATE_ROOT/worker.ready"
+touch -t 200001010000 "$STATE_ROOT/worker.ready" "$STATE_ROOT/worker.lock"
+fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
+  || fail "a stray shutdown temp file wedged stale lock reclamation: $FM_REMOTE_JOB_ERROR"
+fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
+  || fail "the replacement worker did not publish the current code identity after stray-lock recovery"
+[ ! -e "$STATE_ROOT/worker.lock/.quarantine.stray1" ] \
+  || fail "the stray shutdown temp file survived lock reclamation"
+pass "a stray shutdown temp file does not wedge stale lock reclamation"
+
 FM_REMOTE_JOB_TIMEOUT=1
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-timeout-job.sh < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID

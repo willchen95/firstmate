@@ -144,7 +144,7 @@ worker_recover_quarantine() { # <account-home>
 }
 
 worker_acquire_lock() {
-  local account_home=$1 attempt=0
+  local account_home=$1 attempt=0 stray
   while [ "$attempt" -lt 150 ]; do
     if (umask 077; mkdir "$WORKER_LOCK") 2>/dev/null; then
       WORKER_LOCK_HELD=1
@@ -164,6 +164,14 @@ worker_acquire_lock() {
     fi
     [ ! -L "$WORKER_LOCK/pid" ] && [ ! -L "$WORKER_LOCK/start" ] && [ ! -L "$WORKER_LOCK/command" ] || return 1
     rm -f -- "$WORKER_LOCK/pid" "$WORKER_LOCK/start" "$WORKER_LOCK/command" || return 1
+    # A hard-killed owner can die between mktemp and mv inside
+    # worker_publish_lock_owner or worker_publish_quarantine, stranding its
+    # private temp file here. Left in place it makes this rmdir fail on every
+    # restart, so no replacement worker can ever reclaim the stale lock.
+    for stray in "$WORKER_LOCK"/.pid.* "$WORKER_LOCK"/.start.* "$WORKER_LOCK"/.command.* "$WORKER_LOCK"/.quarantine.*; do
+      [ -f "$stray" ] && [ ! -L "$stray" ] || continue
+      rm -f -- "$stray" || return 1
+    done
     rmdir "$WORKER_LOCK" || return 1
   done
   return 1
