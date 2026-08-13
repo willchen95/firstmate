@@ -194,6 +194,9 @@ cleanup_bearings_tmp() {
   esac
 }
 trap cleanup_bearings_tmp EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ "$ALL_LANDED" = 1 ] || [ "$ALL_SECONDMATES" = 1 ]; then
   if [ "$ALL_LANDED" = 1 ]; then
@@ -251,7 +254,10 @@ $(jq -r '.tasks[] | select(.kind != "secondmate") | .paths.worktree.path // empt
 EOF
 
     for repo in $repos; do PR_REPOS_TOTAL=$((PR_REPOS_TOTAL + 1)); done
-    nrepos=0; npr=0; nwarn=0; ncapped=0; rows='[]'
+    nrepos=0; npr=0; nwarn=0; ncapped=0
+    PR_ROWS_FILE="$BEARINGS_TMP/pr-rows.jsonl"
+    : > "$PR_ROWS_FILE" \
+      || { echo "fm-bearings-snapshot: candidate PR staging failed" >&2; exit 1; }
     pr_fetch_limit=$((FM_BEARINGS_PR_LIMIT + 1))
     for repo in $repos; do
       if [ "$ALL_PR_REPOS" != 1 ] && [ "$nrepos" -ge "$FM_BEARINGS_PR_REPOS" ]; then break; fi
@@ -280,12 +286,14 @@ EOF
       cnt=$(printf '%s' "$repo_rows" | jq 'length')
       [ "$returned" -gt "$FM_BEARINGS_PR_LIMIT" ] && ncapped=$((ncapped + 1))
       npr=$((npr + cnt))
-      rows=$(jq -n --argjson a "$rows" --argjson b "$repo_rows" '$a + $b')
+      printf '%s\n' "$repo_rows" >> "$PR_ROWS_FILE" \
+        || { echo "fm-bearings-snapshot: candidate PR staging failed" >&2; exit 1; }
     done
     PR_REPOS_SHOWN=$nrepos
     PR_ROWS_CAPPED=$ncapped
     PR_ROWS_MIN_TOTAL=$((npr + ncapped))
-    CANDIDATE_PRS=$rows
+    CANDIDATE_PRS=$(jq -s 'add // []' "$PR_ROWS_FILE") \
+      || { echo "fm-bearings-snapshot: candidate PR aggregation failed" >&2; exit 1; }
     warnnote=""
     [ "$nwarn" -gt 0 ] && warnnote="; ${nwarn} repo(s) unavailable"
     cappednote=""
