@@ -73,59 +73,59 @@ run_label_spawn() {
 # --- parse-time validation (fm-spawn.sh runs these before --mode check) ----
 
 test_rejects_newlines_in_label() {
-  local output rc
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label $'foo\nbar' 2>&1) && { fail "expected failure"; return; } || rc=$?
+  local output
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label $'foo\nbar' 2>&1) && fail "expected failure" || true
   echo "$output" | grep -q "error: --label contains newline or carriage return characters" \
     || fail "wrong error for newline in label: $output"
   pass "--label rejects newlines in value"
 }
 
 test_rejects_carriage_return_in_label() {
-  local output rc
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label $'foo\rbar' 2>&1) && { fail "expected failure"; return; } || rc=$?
+  local output
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label $'foo\rbar' 2>&1) && fail "expected failure" || true
   echo "$output" | grep -q "error: --label contains newline or carriage return characters" \
     || fail "wrong error for CR in label: $output"
   pass "--label rejects carriage returns in value"
 }
 
 test_rejects_home_workspace_label_collision() {
-  local output rc
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label "firstmate" 2>&1) && { fail "expected failure"; return; } || rc=$?
+  local output
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label "firstmate" 2>&1) && fail "expected failure" || true
   echo "$output" | grep -q "error: --label 'firstmate' collides with the home workspace label" \
     || fail "wrong error for home label collision: $output"
   pass "--label rejects 'firstmate' (home workspace label collision)"
 }
 
 test_rejects_projection_child_pattern() {
-  local output rc
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label '└ Door Panel · p:abc123' 2>&1) && { fail "expected failure"; return; } || rc=$?
+  local output
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label '└ Door Panel · p:abc123' 2>&1) && fail "expected failure" || true
   echo "$output" | grep -q "error: --label '└" \
     || fail "wrong error for projection pattern: $output"
   pass "--label rejects labels starting with '└'"
 }
 
 test_rejects_token_suffix_pattern() {
-  local output rc
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label 'Door Panel · p:AbCdEfGhIjKlMnOpQrStUv' 2>&1) && { fail "expected failure"; return; } || rc=$?
+  local output
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label 'Door Panel · p:AbCdEfGhIjKlMnOpQrStUv' 2>&1) && fail "expected failure" || true
   echo "$output" | grep -q "suffix reserved for the projection token grammar" \
     || fail "wrong error for token-suffix label: $output"
   pass "--label rejects a ' · p:<22-char-token>' suffix"
 }
 
 test_near_token_suffix_passes_validation() {
-  local output rc
+  local output
   # 21 token characters is not the reserved 22-char grammar, so this label is
   # allowed and the spawn proceeds to the --mode requirement.
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label 'Door Panel · p:AbCdEfGhIjKlMnOpQrStU' 2>&1) && { fail "expected failure (--mode required)"; return; } || rc=$?
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label 'Door Panel · p:AbCdEfGhIjKlMnOpQrStU' 2>&1) && fail "expected failure (--mode required)" || true
   echo "$output" | grep -q "ship spawns require --mode" \
     || fail "expected --mode error after near-token label, got: $output"
   pass "a non-token-shaped ' · p:' label passes validation (reaches --mode check)"
 }
 
 test_valid_label_passes_validation() {
-  local output rc
+  local output
   # A valid label should pass the label checks and fail on --mode requirement
-  output=$(bash "$ROOT/bin/fm-spawn.sh" --label "Door Panel · fix clearance" 2>&1) && { fail "expected failure (--mode required)"; return; } || rc=$?
+  output=$(bash "$ROOT/bin/fm-spawn.sh" --label "Door Panel · fix clearance" 2>&1) && fail "expected failure (--mode required)" || true
   echo "$output" | grep -q "ship spawns require --mode" \
     || fail "expected --mode error after valid label, got: $output"
   pass "valid --label passes validation (reaches --mode check)"
@@ -139,9 +139,9 @@ test_meta_records_label() {
   read_label_case "$rec"
   out=$(run_label_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" \
     "$CASE_ID" "$PROJ_DIR" --label 'Door Panel · fix clearance') \
-    || { fail "spawn with --label failed: $out"; return; }
+    || fail "spawn with --label failed: $out"
   meta="$HOME_DIR/state/$CASE_ID.meta"
-  [ -f "$meta" ] || { fail "spawn did not write $meta: $out"; return; }
+  [ -f "$meta" ] || fail "spawn did not write $meta: $out"
   grep -q '^label=Door Panel · fix clearance$' "$meta" \
     || fail "label= not recorded in state/<id>.meta: $(cat "$meta")"
   pass "spawn records label= in state/<id>.meta when --label is given"
@@ -153,9 +153,9 @@ test_meta_omits_label_when_unset() {
   read_label_case "$rec"
   out=$(run_label_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" \
     "$CASE_ID" "$PROJ_DIR") \
-    || { fail "spawn without --label failed: $out"; return; }
+    || fail "spawn without --label failed: $out"
   meta="$HOME_DIR/state/$CASE_ID.meta"
-  [ -f "$meta" ] || { fail "spawn did not write $meta: $out"; return; }
+  [ -f "$meta" ] || fail "spawn did not write $meta: $out"
   if grep -q '^label=' "$meta"; then
     fail "label= recorded in state/<id>.meta without --label: $(cat "$meta")"
   fi
@@ -169,7 +169,7 @@ test_meta_omits_label_when_unset() {
 # --- batch dispatch guard ----------------------------------------------------
 
 test_rejects_label_on_batch_spawn() {
-  local home output rc
+  local home output
   # Minimal home with no crew-dispatch.json so the harness check passes.
   home="$TMP_ROOT/batch-label-refusal"
   mkdir -p "$home/config" "$home/state" "$home/data"
@@ -178,7 +178,7 @@ test_rejects_label_on_batch_spawn() {
   output=$(FM_HOME="$home" FM_SPAWN_NO_GUARD=1 bash "$ROOT/bin/fm-spawn.sh" \
     task1=repo1 --label 'Door Panel · fix clearance' \
     --mode no-mistakes --yolo off 2>&1) \
-    && { fail "expected failure for --label + batch"; return; } || rc=$?
+    && fail "expected failure for --label + batch" || true
   echo "$output" | grep -q "error: --label is single-task" \
     || fail "wrong error for --label on batch spawn: $output"
   pass "--label on batch dispatch is refused with a single-task error"

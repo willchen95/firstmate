@@ -1290,7 +1290,7 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
 }
 
 test_projection_create_applies_custom_label() {
-  local dir state log resp fb out label_log
+  local dir state log resp fb out
   dir="$TMP_ROOT/projection-custom-label"; state="$dir/state"; mkdir -p "$dir/responses" "$state"
   log="$dir/log"; resp="$dir/responses"; : > "$log"
   printf '{"result":{"workspace":{"workspace_id":"w9"},"tab":{"tab_id":"w9:t1"},"root_pane":{"pane_id":"w9:p1"}}}\n' > "$resp/1.out"
