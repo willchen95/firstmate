@@ -32,6 +32,25 @@ The `/calm` command replaces the file atomically before changing live presentati
 The extension reloads this preference on every Pi `session_start`, including startup, new, resume, fork, and reload reasons.
 This preference is local to each Firstmate home and is not part of secondmate inherited configuration.
 
+## Optional Pi OpenAI subscription status
+
+[`.pi/extensions/fm-openai-quota.ts`](../.pi/extensions/fm-openai-quota.ts) adds a native footer status without replacing the model, effort, context, token, or cost display.
+It is off by default; explicitly load it with `pi -e /path/to/firstmate/.pi/extensions/fm-openai-quota.ts --openai-quota` for a new interactive session, or pass `--openai-quota` when the trusted project already discovers it.
+Loading the file alone does not start quota queries, and noninteractive modes do not query.
+Do not load a second copy or enable another quota refresher alongside it; custom footers must render Pi's extension statuses to show this indicator.
+
+The extension runs the installed `quota-axi --provider codex --json`, displaying only actual returned window labels and remaining percentages (for example, `OpenAI week 42% left`).
+It displays OpenAI subscription information even when another model is selected; it is not API token cost, a usage guarantee, or a projection.
+The existing quota tool owns authentication; the extension neither reads credentials nor stores or sends account snapshots to the model.
+It accepts quota-axi schema 3 fresh data, refreshes 60 seconds after each completed query, and limits each subprocess to five seconds and 256 KiB of output.
+Cached percentages expire five minutes after the source refresh timestamp or at the earliest returned reset, whichever comes first.
+Missing or invalid data and query failures show `OpenAI quota unavailable`; initial data is `unknown`, and expired data is `stale`, never an inferred zero or healthy balance.
+Session shutdown and replacement cancel pending queries and remove timers and this status only.
+
+Run `bash tests/fm-openai-quota.test.sh` for parser, subprocess, footer, and installed-SDK lifecycle checks without model calls, and `bash tests/fm-pi-primary-types.test.sh` for installed-SDK type compatibility.
+To check a private fresh quota snapshot, set `FM_QUOTA_SNAPSHOT` to its JSON file path for the focused test; the test does not print the account values.
+Code verification does not install, enable, or reload the extension in an existing session.
+
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
