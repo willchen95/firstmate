@@ -3,7 +3,8 @@
 # data/<task-id>/brief.md under the active firstmate home.
 # For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
 # filled in. Firstmate then replaces the {TASK} placeholder with the task
-# description, acceptance criteria, and context, and may adjust other sections
+# description, acceptance criteria, and context under Firstmate spec, preserving
+# actual captain words separately under Captain's intent. It may adjust sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
@@ -43,8 +44,8 @@
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
-# There is no --yolo flag here. The worker never owns approval decisions, so yolo is
-# a spawn-time and firstmate-side input only (AGENTS.md section 7).
+# There is no --yolo flag here: merge authority is a spawn-time and
+# firstmate-side input only (AGENTS.md section 7).
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
@@ -127,10 +128,10 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
-    # yolo never reaches the worker: it is firstmate's approval authority, not a
+    # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
-    --yolo|--yolo=*) echo "error: --yolo is not a brief input; pass it to bin/fm-spawn.sh, which records the task's approval posture" >&2; exit 1 ;;
+    --yolo|--yolo=*) echo "error: --yolo is not a brief input; pass it to bin/fm-spawn.sh, which records the task's merge posture" >&2; exit 1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -300,9 +301,16 @@ fi
 
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
-You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+# Current worker role contract
+You are a crewmate: an autonomous worker managed by firstmate, not a supervisor.
+Do the assigned work yourself and report only to firstmate; do not delegate, run fleet supervision, or address the captain.
+When working on Firstmate itself, follow this brief instead of the root supervisor identity in AGENTS.md; nonconflicting project instructions, CONTRIBUTING.md, and firstmate-coding-guidelines still apply.
 
 # Task
+## Captain's intent
+{CAPTAIN_WORDS}
+
+## Firstmate spec
 {TASK}
 
 $HERDR_SECTION
@@ -343,7 +351,7 @@ Before reporting done, read and follow \`$FM_ROOT/.agents/skills/decision-hold-l
 When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
-echo "scaffolded: $BRIEF (scout; replace {TASK})"
+echo "scaffolded: $BRIEF (scout; replace {CAPTAIN_WORDS} and {TASK})"
 exit 0
 fi
 
@@ -390,14 +398,19 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
-When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
+When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, without its heading, plus later words the captain actually said.
+Preserve the actual words without adding speaker labels or direct address.
+For a legacy brief without that subsection, use only lines marked \`[captain] \`, excluding the prefix; if no provenance-marked captain words exist, stop and ask firstmate.
+Do not include \`## Firstmate spec\`, later Firstmate build constraints, or your own decisions and tradeoffs.
+The intent must be self-sufficient with the codebase: expand captain-approved references to reports, decisions, or PRs into their substance in the captain's terms, not just a pointer.
+This replaces the generic no-mistakes advice to enrich intent with your own decisions and tradeoffs.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
 Two firstmate-specific rules layer on top of that guidance:
-- ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
-  Firstmate applies the authority contract in its \`AGENTS.md\` and obtains any required captain decision.
+- ask-user findings are never yours to answer: escalate to firstmate using rule 6's snapshot format and stop.
+  Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
-- Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
+- Never pass \`--yes\` or \`-y\` to \`no-mistakes axi run\` or \`no-mistakes axi respond\`: eligible gates, including ordinary ask-user findings, would bypass firstmate's authority check.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
@@ -410,9 +423,16 @@ esac
 DOD=${DOD%$'\n'}
 
 cat > "$BRIEF" <<EOF
-You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+# Current worker role contract
+You are a crewmate: an autonomous worker managed by firstmate, not a supervisor.
+Do the assigned work yourself and report only to firstmate; do not delegate, run fleet supervision, or address the captain.
+When working on Firstmate itself, follow this brief instead of the root supervisor identity in AGENTS.md; nonconflicting project instructions, CONTRIBUTING.md, and firstmate-coding-guidelines still apply.
 
 # Task
+## Captain's intent
+{CAPTAIN_WORDS}
+
+## Firstmate spec
 {TASK}
 
 $HERDR_SECTION
@@ -428,7 +448,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; modify nothing outside it.
+2. Stay inside this worktree; outside it write only the status file and private finding snapshots explicitly named below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
@@ -445,7 +465,11 @@ $RULE1
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
+   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   For a no-mistakes ask-user gate, instead write only its ask-user findings verbatim (id, severity, file, line, description, authority) to \`$DATA/$ID/nm-<run>-<step>-findings.txt\`, then append one event:
+   \`needs-decision [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=$DATA/$ID/nm-<run>-<step>-findings.txt\`
+   Include every ask-user finding id even for a single finding; the event points to the private snapshot and never summarizes its contents.
+   Retain prior snapshots if a step recurs by adding a round suffix to the filename; firstmate, not the worker, translates findings for the captain.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
@@ -461,4 +485,4 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 $DOD
 EOF
-echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK})"
+echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {CAPTAIN_WORDS} and {TASK})"

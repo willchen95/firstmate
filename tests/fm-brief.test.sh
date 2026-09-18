@@ -310,11 +310,11 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
     "local-only brief hard-coded captain-only authority"
   assert_no_grep "Firstmate then reviews your branch diff" "$brief" \
     "local-only brief retained a personal review stacked on the selected delivery path"
-  assert_no_grep "make \`--intent\` preserve all relevant content from this brief" "$home/data/$id/brief.md" \
+  assert_no_grep "pass \`--intent\` as only this brief's" "$home/data/$id/brief.md" \
     "local-only brief must not include the no-mistakes --intent contract"
   id="brief-direct-intent-a4"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj --mode direct-PR >/dev/null 2>&1
-  assert_no_grep "make \`--intent\` preserve all relevant content from this brief" "$home/data/$id/brief.md" \
+  assert_no_grep "pass \`--intent\` as only this brief's" "$home/data/$id/brief.md" \
     "direct-PR brief must not include the no-mistakes --intent contract"
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
@@ -337,14 +337,19 @@ test_no_mistakes_dod_wording() {
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`help`' "$brief" \
     "no-mistakes DOD must render literal backticks around help"
-  assert_grep "make \`--intent\` preserve all relevant content from this brief" "$brief" \
+  assert_grep "pass \`--intent\` as only this brief's" "$brief" \
     "no-mistakes DOD must require --intent to retain the accepted task contract"
-  assert_grep "carrying only each requirement's current accepted form" "$brief" \
-    "no-mistakes DOD must replace superseded requirements with their current accepted form"
-  assert_grep "retain direct requirements instead of substituting a diff summary" "$brief" \
-    "no-mistakes DOD must keep direct requirements and exclude generic scaffold boilerplate from --intent"
-  assert_grep "exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific" "$brief" \
-    "no-mistakes DOD must exclude non-task-specific scaffold boilerplate from --intent"
+  assert_grep "## Captain's intent" "$brief" "brief must separate captain provenance"
+  assert_grep "## Firstmate spec" "$brief" "brief must separate implementation instructions"
+  assert_grep "stop and ask firstmate" "$brief" "legacy intent without provenance must stop"
+  assert_grep "Do not include" "$brief" "intent must exclude agent-authored requirements"
+  assert_grep "expand captain-approved references" "$brief" "referenced intent must be self-sufficient"
+  # shellcheck disable=SC2016 # Assert literal Markdown command flags in generated output.
+  assert_grep 'Never pass `--yes` or `-y`' "$brief" "both unattended gate flags must be banned"
+  assert_grep "$home/data/$id/nm-<run>-<step>-findings.txt" "$brief" "finding evidence must bind to the task home"
+  assert_grep 'id, severity, file, line, description, authority' "$brief" "private evidence must preserve full findings"
+  assert_grep 'needs-decision [key=nm-<run>-<step>]' "$brief" "finding escalation must carry its resolution key"
+  assert_grep 'not a supervisor' "$brief" "worker role must precede project instructions"
   # The apostrophe in "firstmate's authority check" is now structurally safe
   # (no `$(...)` wrapper around the heredoc), so it renders verbatim instead of
   # being reworded or escaped away. test_no_heredoc_in_command_substitution
@@ -352,6 +357,25 @@ test_no_mistakes_dod_wording() {
   assert_grep "firstmate's authority check" "$brief" \
     "no-mistakes DOD lost the apostrophe prose that the structural fix makes parse-safe"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe"
+}
+
+# Promotion reuses the existing scaffold in a separate private directory, keeping
+# the scout's evidence intact instead of inventing a second delivery contract.
+test_promotion_scaffold_preserves_scout() {
+  local home id original brief
+  home="$TMP_ROOT/promotion home"
+  id=promoted-brief
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null || fail "scout scaffold failed"
+  original=$(cksum < "$home/data/$id/brief.md")
+  FM_HOME="$home" FM_DATA_OVERRIDE="$home/data/$id/ship-contract" \
+    "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null || fail "promotion scaffold failed"
+  [ "$original" = "$(cksum < "$home/data/$id/brief.md")" ] || fail "promotion scaffold changed scout evidence"
+  brief="$home/data/$id/ship-contract/$id/brief.md"
+  assert_grep 'Delivery contract: mode=no-mistakes' "$brief" "promoted contract lost delivery mode"
+  assert_grep "$home/state/$id.status" "$brief" "promoted contract must retain task status routing"
+  assert_grep "$home/data/$id/ship-contract/$id/nm-<run>-<step>-findings.txt" "$brief" "promoted findings must use explicit private destination"
+  assert_grep "## Captain's intent" "$brief" "promotion must preserve captain provenance"
+  pass "fm-brief.sh: promotion scaffold preserves scout evidence and task routing"
 }
 
 test_ship_project_memory_wording() {
@@ -719,6 +743,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_promotion_scaffold_preserves_scout
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
