@@ -14,6 +14,7 @@ node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { mock } from 'node:test';
 import childProcess from 'node:child_process';
@@ -163,6 +164,17 @@ initTheme('dark', false);
 const footer = new FooterComponent(session, { getGitBranch: () => null,
   getAvailableProviderCount: () => 1, getExtensionStatuses: () => statuses });
 const baseline = footer.render(160);
+// Optional visual evidence from the installed native footer, using synthetic quota only.
+function capture(name, width = 160) {
+  if (!process.env.FM_QUOTA_RENDER_DIR) return;
+  mkdirSync(process.env.FM_QUOTA_RENDER_DIR, { recursive: true });
+  const lines = footer.render(width).map(stripVTControlCharacters);
+  const escape = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const rows = lines.map((line, i) => `<text x="16" y="${28 + i * 24}" xml:space="preserve">${escape(line)}</text>`).join('');
+  writeFileSync(`${process.env.FM_QUOTA_RENDER_DIR}/${name}-${width}.svg`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width * 10 + 32}" height="${lines.length * 24 + 24}"><rect width="100%" height="100%" fill="#181818"/><g fill="#aaaaaa" font-family="monospace" font-size="16">${rows}</g></svg>`);
+}
+capture('disabled');
 const errors = [];
 await session.bindExtensions({ uiContext: ui, mode: 'tui', onError: e => errors.push(e) });
 assert.equal(statuses.has(key), false, 'optional flag off starts nothing');
@@ -173,7 +185,9 @@ cli(`console.log(JSON.stringify(${JSON.stringify(fixture())}))`);
 session.extensionRunner.setUIContext(ui, 'tui');
 for (const reason of ['startup', 'reload', 'new', 'resume', 'fork']) {
   await session.extensionRunner.emit({ type: 'session_start', reason });
+  if (reason === 'startup') capture('loading');
   await waitFor(() => statuses.get(key)?.includes('week 12.3% left'));
+  if (reason === 'startup') for (const width of [40, 80, 160]) capture('fresh', width);
   const rendered = footer.render(160);
   assert.deepEqual(rendered.slice(0, -1), baseline.slice(0, -1), 'native model/effort/context footer untouched');
   assert.match(rendered.join('\n'), /gpt-6-astra/);
@@ -183,6 +197,19 @@ for (const reason of ['startup', 'reload', 'new', 'resume', 'fork']) {
     assert.ok(footer.render(width).every(line => visibleWidth(line) <= width), 'native narrow rendering');
   }
   await session.extensionRunner.emit({ type: 'session_shutdown', reason: reason === 'startup' ? 'quit' : reason });
+  assert.equal(statuses.has(key), false);
+}
+capture('shutdown');
+for (const [name, body, expected] of [
+  ['stale', `console.log(JSON.stringify(${JSON.stringify({ ...fixture(), providers: [{ ...fixture().providers[0], state: { status: 'stale', stale: true } }] })}))`, 'OpenAI quota stale'],
+  ['unavailable', 'process.exit(1)', 'OpenAI quota unavailable'],
+]) {
+  cli(body);
+  await session.extensionRunner.emit({ type: 'session_start', reason: 'startup' });
+  await waitFor(() => statuses.get(key) === expected);
+  assert.match(footer.render(160).join('\n'), new RegExp(expected));
+  capture(name);
+  await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
   assert.equal(statuses.has(key), false);
 }
 assert.deepEqual(errors, []);
