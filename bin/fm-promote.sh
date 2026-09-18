@@ -5,7 +5,10 @@
 # again. After promoting, send the crewmate its ship instructions via fm-send.sh
 # (inventory scratch state, reset to a clean default-branch base, carry over only
 # intended fix changes, create branch fm/<task-id>, implement, then report done
-# according to this task's delivery mode).
+# according to this task's delivery mode). Use fm-brief.sh's generated ship
+# contract for that handoff, not a hand-written no-mistakes substitute. To retain
+# the original scout brief, scaffold with FM_DATA_OVERRIDE set to a fresh private
+# directory; fill both captain-intent and Firstmate-spec placeholders before sending.
 # A scout records no delivery posture, so promotion is where this task's delivery
 # contract is decided: --mode and --yolo are REQUIRED and written into the meta
 # alongside the kind= flip. Firstmate resolves both at promotion time, having just
@@ -58,7 +61,7 @@ done
   exit 1
 }
 [ "$YOLO_SET" -eq 1 ] || {
-  echo "error: promotion requires --yolo <on|off>; it is this task's routine approval authority, not a project lookup" >&2
+  echo "error: promotion requires --yolo <on|off>; it is this task's merge authority, not a project lookup" >&2
   exit 1
 }
 case "$MODE" in
