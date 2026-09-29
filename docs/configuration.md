@@ -16,13 +16,40 @@ The tracked code root contains the shared instruction, skill, documentation, wor
 
 `bin/fm-spawn.sh` owns the base task-metadata fields it emits, while the runtime-backend section below owns backend-specific fields and selector interpretation.
 The producing PR and Relay helpers own the fields they append, `bin/fm-classify-lib.sh` owns status-event vocabulary, and `bin/fm-crew-state.sh` owns current-state reconciliation.
-Wake, watcher, away-mode, and Relay-specific state mechanics remain with their named scripts and reference sections rather than being duplicated into one exhaustive state tree here.
+The [runtime-record owner index](#runtime-record-owner-index) below routes child records to their existing owners rather than duplicating their schemas here.
+For shared-file orientation and skill symlinks, see [Repo conventions](../CONTRIBUTING.md#repo-conventions); for project-registry syntax and delivery posture, see [`project-management`](../.agents/skills/project-management/SKILL.md) and its `bin/fm-project-mode.sh` parser.
+Task instructions live in `data/<id>/brief.md` under [`bin/fm-brief.sh`](../bin/fm-brief.sh); scout deliverables live in `data/<id>/report.md` and survive cleanup under [the task lifecycle](../AGENTS.md#scout-outcome-and-promotion).
 
 `bin/fm-session-start.sh`'s header is the single owner of session-start ordering, composed commands, digest contents, and the digest's startup mechanism.
 `bin/fm-startup-network.sh`'s header owns the deferred network stage that keeps every external-network call off that digest's blocking path, including its state files and the safety argument for running them later.
 `docs/sessionstart-nudge.md` owns the native session-open adapter tiers that run or nudge the digest command, and the source routing between them.
 `AGENTS.md` retains the run-once and read-once operator rules, lock-refusal safety, installation consent, and direct-report recovery boundaries because those facts apply at every session start.
 Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, while persistent-secondmate recovery is owned by `secondmate-provisioning`.
+
+### Runtime-record owner index
+
+Paths below are relative to the effective home's `state/` directory.
+This is a discovery index, not a second schema or manual-repair procedure; [`AGENTS.md` section 2](../AGENTS.md#2-layout-and-state) keeps the protected-state boundary always loaded.
+
+| Records | Owner to consult |
+| --- | --- |
+| `<id>.meta`, `<id>.muse-session` | [`fm-spawn.sh`](../bin/fm-spawn.sh) for emitted bindings; [Runtime backend](#runtime-backend-configbackend--fm_backend) and [Trace context](#trace-context-propagation-configtrace-context--fm_trace_context) for extensions; [`fm-teardown.sh`](../bin/fm-teardown.sh) for cleanup. |
+| `<id>.status`, `<id>.turn-ended`, `<id>.grok-turnend-token`, `<id>.kimi-turnend-token` | [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) for hook routing; [`fm-classify-lib.sh`](../bin/fm-classify-lib.sh) for events, [`fm-crew-state.sh`](../bin/fm-crew-state.sh) for current truth, and [`fm-teardown.sh`](../bin/fm-teardown.sh) for token removal. |
+| `<id>.herdr-presentation` | [Presentation spaces](herdr-backend.md#presentation-spaces); this journal is never task or endpoint authority. |
+| `<id>.check.sh`, `<id>.check-trust` | [`fm-watch.sh`](../bin/fm-watch.sh) for authenticated dispatch and [`fm-check-register.sh`](../bin/fm-check-register.sh) / [`fm-check-lib.sh`](../bin/fm-check-lib.sh) for custom-check trust. |
+| `<id>.pr-poll`, `<id>.pr-poll-registration`, `<id>.pr-poll-retirement` | [`fm-pr-check.sh`](../bin/fm-pr-check.sh) and [`fm-pr-lib.sh`](../bin/fm-pr-lib.sh); [Architecture](architecture.md#event-driven-supervision) explains queue-before-retirement ordering. |
+| `.pr-check-quarantine/`, `.pr-check-migration.log`, `.pr-check-migration-scan-v1`, `.pr-check-migration-v1` | [`fm-pr-check-migrate.sh`](../bin/fm-pr-check-migrate.sh) for non-executing quarantine, per-task outcomes, scan completion, and repair completion. |
+| `pending-replies/` | [`fm-pending-reply-lib.sh`](../bin/fm-pending-reply-lib.sh) for parent-owned correlation, recovery, and escalation. |
+| `procevent/`, `procevent-inbox/`, `when/` | [Process-to-event sources](#process-to-event-sources-stateprocevent) and its named producers. |
+| `x-watch.check.sh`, `x-inbox/`, `x-context/`, `x-outbox/`, `x-poll.error`, `x-poll.claim-error` | [Relay](#relay-env) for generated polls, mentions, durable context, previews, and diagnostic deduplication. |
+| `public-followup/` | [Promised public replies](#promised-public-replies-statepublic-followup). |
+| `.startup-network.*` | [`fm-startup-network.sh`](../bin/fm-startup-network.sh) for deferred-network reports, timings, claims, and locks. |
+| `.wake-queue`, `.wake-queue.lock`, `.watcher-down` | [`fm-wake-lib.sh`](../bin/fm-wake-lib.sh) and [`fm-wake-drain.sh`](../bin/fm-wake-drain.sh) for durable queue and generation-bound recovery. |
+| `.<id>.open-decisions-cursor` | [`fm-classify-lib.sh`](../bin/fm-classify-lib.sh), `status_open_decisions_incremental`; this disposable cursor can be deleted to force a full re-fold and is removed by teardown. |
+| `.watch.lock`, `.last-watcher-beat`, `.hash-*`, `.count-*`, `.stale-*`, `.stale-since-*`, `.paused-*`, `.wedge-escalations-*`, `.seen-*`, `.hb-surfaced-*`, `.last-*`, `.heartbeat-streak` | [`fm-watch.sh`](../bin/fm-watch.sh) and [Architecture](architecture.md#event-driven-supervision) for singleton, liveness, and protected suppression state. |
+| `.watch-triage.log` | [`fm-watch.sh`](../bin/fm-watch.sh) for the size-capped absorbed-wake debug log; disposable, never current-state authority. |
+| `.claude-autoarm.lock`, `.claude-autoarm-epoch`, `.claude-autoarm-failure-notified`, `.claude-autoarm-failure-alarmed`, `.turnend-claude-blocks`, `.turnend-claude-blocks.lock` | [`fm-claude-stop-autoarm.sh`](../bin/fm-claude-stop-autoarm.sh), [`fm-turnend-guard.sh`](../bin/fm-turnend-guard.sh), and [Turn-end guard](turnend-guard.md) for protected auto-arm and guard records. |
+| `.afk`, `.subsuper-*`, `.supervise-daemon.*` | [`afk`](../.agents/skills/afk/SKILL.md) for the away-mode flag and protected daemon internals. |
 
 ## Pi Calm preference (config/calm)
 
